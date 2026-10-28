@@ -31,6 +31,7 @@ def other_metal():
     with open(dmsh_chain.LOCK) as f: want = dict(l.rstrip('\n').split('\t', 1) for l in f if '\t' in l and not l.startswith('#'))
     out = []
     for sdk in ('macosx', 'iphoneos'):
+        if sdk == 'iphoneos' and os.environ.get('DM_APP_PLATFORM') == 'visionos': continue
         now = metal_version(sdk)
         if now != 'missing' and now != want.get('metal_' + sdk): out.append(('metal_' + sdk, want.get('metal_' + sdk), now))
     return out
@@ -45,9 +46,10 @@ def ios_target():   # as dmsh_build.py picks its targets: a Mac-only build (the 
 def check_tools():
     bad, own = [], []
     for b in strict():
+        if os.environ.get('DM_APP_PLATFORM') == 'visionos' and b.startswith('metal_iphoneos: '): continue
         m = OWN.fullmatch(b)
         if m: own.append((m[1], m[2], m[3]))   # (lock key, tested, actual)
-        elif not (b.startswith('metal_iphoneos: ') and b.endswith(' / actual missing') and not ios_target()): bad.append(b)   # a Mac without the iOS platform
+        elif not (b.startswith('metal_iphoneos: ') and b.endswith(' / actual missing') and (not ios_target() or os.environ.get('DM_APP_PLATFORM') == 'visionos')): bad.append(b)   # a Mac without the iOS platform
     if bad: return bad
     metal = own
     if metal and not allowed(): sys.exit(other_metal_message(metal))
