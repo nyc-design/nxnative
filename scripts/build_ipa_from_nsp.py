@@ -887,7 +887,7 @@ def check_prereqs(env, xlate, mac=False):   # mac: a Mac-only build (PLATFORM 'm
     gone = [f'{t} ({how})' for t, how in tools.items() if not shutil.which(t, path=env['PATH'])]
     if gone: raise BuildError('tools not found: ' + ', '.join(gone))
     if not mac: check_ios_sdk(env)   # before the Metal check, whose message would blame the Metal toolchain
-    mtl = subprocess.run(['xcrun', '-sdk', 'macosx' if mac else 'iphoneos', 'metal', '--version'], capture_output=True, text=True, env=env)   # Xcode 26 and later install the Metal toolchain separately
+    mtl = subprocess.run(['xcrun', '-sdk', 'macosx' if mac else ('xros' if env.get('DM_APP_PLATFORM') == 'visionos' else 'iphoneos'), 'metal', '--version'], capture_output=True, text=True, env=env)   # Xcode 26 and later install the Metal toolchain separately
     if mtl.returncode: raise BuildError(f'the Metal compiler does not run ({(mtl.stderr.strip().splitlines() or ["no output"])[-1]}): install it with xcodebuild -downloadComponent MetalToolchain')
     if not xlate.exists(): raise BuildError(f'the shader translator is missing from the repository: {xlate}')
     check_translator(xlate, env)
@@ -895,11 +895,12 @@ def check_prereqs(env, xlate, mac=False):   # mac: a Mac-only build (PLATFORM 'm
     if not shutil.which(sc, path=env.get('PATH')): raise BuildError(f'spirv-cross is missing or not executable: {sc}')
 
 
-def check_ios_sdk(env):   # the iOS platform is a separate download in Xcode's Components; xcodebuild, the Metal toolchain and the macOS SDK can be there without it
-    if subprocess.run(['xcrun', '--sdk', 'iphoneos', '--show-sdk-version'], capture_output=True, text=True, env=env).returncode == 0: return
+def check_ios_sdk(env):   # Check the target SDK before expensive shader translation.
+    sdk = 'xros' if env.get('DM_APP_PLATFORM') == 'visionos' else 'iphoneos'
+    if subprocess.run(['xcrun', '--sdk', sdk, '--show-sdk-version'], capture_output=True, text=True, env=env).returncode == 0: return
     dev = subprocess.run(['xcode-select', '-p'], capture_output=True, text=True, env=env).stdout.strip()
     if 'CommandLineTools' in dev: raise BuildError(f'the selected developer folder is the Command Line Tools ({dev}), which have no iOS SDK: select Xcode with sudo xcode-select -s /Applications/Xcode.app')
-    raise BuildError('the iOS SDK is not installed: install the iOS platform in Xcode → Settings → Components, or with xcodebuild -downloadPlatform iOS')
+    raise BuildError(f'the {sdk} SDK is not installed: install its platform in Xcode → Settings → Components (visionOS for xros, otherwise iOS)')
 
 
 def check_translator(xlate, env):
@@ -1711,7 +1712,7 @@ def spirv_cross(repo, env=None):   # resolve the same selection the shader tools
 
 def toolchain(repo, env=None):   # Metal is a separate Xcode download: its version and SDK must invalidate reuse too
     return (('cmd', ['xcodebuild', '-version']), ('files', [spirv_cross(repo, env)]),
-            *(('cmd', ['xcrun', '-sdk', sdk, *args]) for sdk in ('macosx', 'iphoneos')
+            *(('cmd', ['xcrun', '-sdk', sdk, *args]) for sdk in ('macosx', 'xros' if (env or os.environ).get('DM_APP_PLATFORM') == 'visionos' else 'iphoneos')
               for args in (['metal', '--version'], ['metallib', '--version'], ['--show-sdk-version'], ['--show-sdk-build-version'])))
 
 
@@ -2173,6 +2174,10 @@ def main(args=None):
     want_lang = language_code(lang_in) if lang_in else 'en-US'
     if not want_lang: raise BuildError(f'unknown game language {lang_in!r}; give one of {language_list([c for c, _ in nacp.LANGUAGES])}, by code or by name')
     env = dict(os.environ, PATH=os.pathsep.join(TOOL_PATHS + [os.environ.get('PATH', '/usr/bin:/bin:/usr/sbin:/sbin')]))
+    if env.get('DM_APP_PLATFORM') == 'visionos' and not prepare_xcode:
+        raise BuildError('visionOS experiment supports only --prepare-xcode and device installation from Xcode')
+    if env.get('DM_APP_PLATFORM') not in (None, '', 'ios', 'visionos'):
+        raise BuildError('DM_APP_PLATFORM must be ios or visionos')
     env.setdefault('USER', getpass.getuser())   # xcodegen fails without USER (Couldn't find current username)
     configure_dotnet(env)
     env.setdefault('J', str(os.cpu_count() or 8))   # shader_split.py's and dmsh_build.py's workers (their default is 8)
@@ -2385,6 +2390,9 @@ def main(args=None):
     gpus = (args.gpu or PSO_GPUS).strip()
     if gpus and not re.fullmatch(r'none|(applegpu_)?g\w+(,(applegpu_)?g\w+)*', gpus): raise BuildError(f'--gpu / PSO_GPUS takes GPU architectures such as g18p,g17p, or none: {gpus}')
     if not gpus: gpus = 'g18p' if g.get('pso_mtl4', 'off') == 'on' else 'none'   # by the profile, as build_ipa.sh decides without DM_PSO_GPUS: only the Metal 4 path reads the archive on iOS
+    if env.get('DM_APP_PLATFORM') == 'visionos':
+        if gpus != 'none': say('visionOS: omitting iPhone-specific precompiled GPU pipeline archive')
+        gpus = 'none'
     ipa_env['DM_PSO_GPUS'] = gpus
     if gfx == 'nvn': say(f'pipeline archive: {"none, the device builds the bases on its first start if it takes the Metal 4 path (--gpu g18p builds one)" if gpus == "none" else gpus + " (made on this Mac with metal-tt; --gpu none leaves it out)"}')
     if show_fps: say('frame-rate counter: on (DM_SHOW_FPS=0 in the app\'s Documents/env.txt turns it off)')
@@ -2399,7 +2407,8 @@ def main(args=None):
         say(f'game project: {project}')
         say(f'Xcode derived data: {work / "xcode-derived-data"}')
         if separate: say_push_romfs(rfs.source(game), bundle_id)
-        say('choose the game scheme in Xcode, select your Team and iPhone or iPad, then Run (Release)')
+        say('choose the game scheme in Xcode, select your Team and Vision Pro, then Run (Release)' if env.get('DM_APP_PLATFORM') == 'visionos' else
+            'choose the game scheme in Xcode, select your Team and iPhone or iPad, then Run (Release)')
         report_profile_status(g, reg, pkg_ver, derived, provisional, 'Xcode project', patched)
         return
     watch = IpaWatch(repo, work / 'ipa', out_ipa)
