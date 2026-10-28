@@ -2,6 +2,7 @@
 """CI build of the production iOS project with synthetic embedded modules.
 
 Requires Xcode and XcodeGen; GAME (or DM_GAME) selects the host profile.
+DM_APP_PLATFORM=visionos builds the Apple Vision Pro variant of the project (apple_platform.py).
 No game files, keys, shaders, signing or device are needed. The resulting app
 is a compile/link fixture, not a runnable game. All Xcode output stays under
 --output, which must name a new directory; keep it on a scratch drive locally.
@@ -18,6 +19,7 @@ import sys
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / 'dm/games'))
 import game
+import apple_platform  # beside this file
 
 
 def main():
@@ -34,7 +36,7 @@ def main():
     tables.mkdir(parents=True)
     for name in ('Sources', 'tools'):
         (project / name).symlink_to(ios / name, target_is_directory=True)
-    shutil.copyfile(ios / 'project.yml', project / 'project.yml')
+    (project / 'project.yml').write_text(apple_platform.project_for_platform((ios / 'project.yml').read_text()))
     assets = gen / 'Assets.xcassets'
     assets.mkdir()
     (assets / 'Contents.json').write_text(json.dumps({'info': {'author': 'xcode', 'version': 1}}))
@@ -81,13 +83,13 @@ def main():
     run(sys.executable, ios / 'tools/gen_resources.py', project, romfs, marker,
         shaders, f'b-{chain}', '', derived, chain_h)
     run('xcodebuild', '-project', project / 'DmIOS.xcodeproj', '-scheme', 'DmIOS',
-        '-configuration', 'Release', '-destination', 'generic/platform=iOS',
+        '-configuration', 'Release', '-destination', apple_platform.destination(),
         '-derivedDataPath', derived, '-jobs', '3',
         'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO', 'CODE_SIGN_IDENTITY=',
         f'DM_XCODE_OUTPUT_ROOT={derived}', f'SYMROOT={derived}/Build/Products',
         f'OBJROOT={derived}/Build/Intermediates.noindex', 'build')
 
-    app = derived / 'Build/Products/Release-iphoneos/DmIOS.app'
+    app = derived / 'Build/Products' / apple_platform.products() / 'DmIOS.app'
     info = plistlib.loads((app / 'Info.plist').read_bytes())
     executable = app / info['CFBundleExecutable']
     if not executable.is_file():
@@ -98,7 +100,7 @@ def main():
             raise RuntimeError(f'Resource staging failed: {packed}')
     if (app / '_CodeSignature').exists() or (app / 'embedded.mobileprovision').exists():
         raise RuntimeError('The smoke-test app must be unsigned')
-    print(f'iOS smoke build passed: {executable}', flush=True)
+    print(f'{apple_platform.name()} smoke build passed: {executable}', flush=True)
 
 
 if __name__ == '__main__':

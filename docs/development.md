@@ -53,10 +53,13 @@ Python standard library; LZ4 is loaded when decoding NSO files.
 
 `.github/workflows/tests.yml` runs host and CPU graphics tests, Python tool
 tests, Mac builds for NVN/Vulkan/OpenGL profiles, and iOS source compilation.
+The build check compiles the iOS sources for the visionOS SDK too, and the
+`visionos-build` job links the [Apple Vision Pro app](visionos-experimental.md)
+from the same project with synthetic modules.
 It also runs the CPU texture layout/deswizzle test (`dm/gfx/tex/tests/t_tex`)
 and the host's `tsan` and `memory-tsan` targets for audio and memory races.
 The texture format test (`t_fmt_mtl`) creates Metal textures and stays local.
-All five macOS jobs, including the sanitizer job, run with the toolchain the
+All six macOS jobs, including the sanitizer job, run with the toolchain the
 project supports: Xcode 27.1 on GitHub's `xcode-27` image, named by path in
 `DEVELOPER_DIR` so a new default Xcode on the image does not change CI. The
 build check first compares the image's Metal compiler with `dmsh_chain.lock`
@@ -362,7 +365,7 @@ python3 scripts/build_ipa_from_nsp.py "<NSP folder>" -k "<prod.keys>" --prepare-
 open "<NSP parent folder>/NxNative.xcworkspace"
 ```
 
-`--prepare-xcode` (`PREPARE_XCODE = True` in Spyder) runs the same extraction, rewrite and shader preparation, reusing unchanged outputs, then stops after generating the project. It does not build an IPA, sign, or install. It needs the extracted files, so it cannot be combined with `--no-keep-extracted`.
+`--prepare-xcode` (`PREPARE_XCODE = True` in Spyder) runs the same extraction, rewrite and shader preparation, reusing unchanged outputs, then stops after generating the project. It does not build an IPA, sign, or install. It needs the extracted files, so it cannot be combined with `--no-keep-extracted`. `--platform visionos` prepares the same project for Apple Vision Pro: see [Apple Vision Pro (experimental)](visionos-experimental.md).
 
 1. In **Xcode > Settings > Apple Accounts**, add your Apple developer account.
 2. Open the **DmIOS** target's **Signing & Capabilities**, enable **Automatically manage signing**, and select your team, replacing the generated placeholder. If Xcode reports that the bundle identifier is unavailable, choose an identifier you own (or pass `--bundle-id` when preparing).

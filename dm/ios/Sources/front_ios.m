@@ -33,7 +33,7 @@ static UILabel *front_ios_fps_label(void);
         CAMetalLayer *l = (CAMetalLayer *)self.layer;
         l.device = MTLCreateSystemDefaultDevice(); l.pixelFormat = MTLPixelFormatBGRA8Unorm;
 #if TARGET_OS_VISION
-        l.contentsScale = self.traitCollection.displayScale ?: 1.0;
+        l.contentsScale = self.traitCollection.displayScale ?: 2.0;   // updated in layoutSubviews
 #else
         l.contentsScale = UIScreen.mainScreen.nativeScale;
 #endif
@@ -45,6 +45,9 @@ static UILabel *front_ios_fps_label(void);
 - (void)layoutSubviews {
     [super layoutSubviews];
     CAMetalLayer *l = (CAMetalLayer *)self.layer;
+#if TARGET_OS_VISION
+    l.contentsScale = self.traitCollection.displayScale ?: 2.0;   // known only once the view is in a window, not at init
+#endif
     l.drawableSize = CGSizeMake(self.bounds.size.width * l.contentsScale, self.bounds.size.height * l.contentsScale);
 }
 @end
