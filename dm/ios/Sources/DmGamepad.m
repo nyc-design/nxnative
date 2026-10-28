@@ -14,6 +14,7 @@
 //   Each physical controller is a player of its own (local co-op), as on the Mac: the first one connected is player 1, together with the touch gamepad, the next player 2, and so on up to 8; see "Physical controllers" below.
 //   Shaking the phone shakes the controller (DM_BTN_SHAKE: its six-axis sensor, hle_hid.c), whichever controls are in use; see "Shaking the phone" below.
 #import <UIKit/UIKit.h>
+#include <TargetConditionals.h>
 #import <GameController/GameController.h>
 #import <CoreMotion/CoreMotion.h>
 #import <CoreText/CoreText.h>
@@ -44,6 +45,7 @@ static void publish(void) {   // the touch gamepad and the shake; the host ORs t
 // The accelerometer at 60 Hz (no gyroscope, no permission prompt): gravity is followed by a slow low-pass (about 0.8 s), and a sample whose acceleration beyond it exceeds DM_SHAKE_G
 // (1.5 G by default; Documents/env.txt overrides) is a hit. The controller is shaken until 120 ms after the last hit: a flick is one shake (the host finishes it as a whole cycle)
 // and shaking on keeps it going. Holding the phone and pressing the screen stays far below the threshold. Each detected shake is logged with its peak
+#if !TARGET_OS_VISION
 static CMMotionManager *g_motion;
 static void motion_start(void) {
     if (g_motion) return;
@@ -95,6 +97,11 @@ static void phone_motion_start(void) {
         dm_motion_set_switch(0, as, ws);
     }];
 }
+#else
+// Vision Pro lacks a phone-orientation gyroscope; gamepad motion remains active.
+static void motion_start(void) {}
+static void phone_motion_start(void) {}
+#endif
 
 // ---- Layout constants (in u; x measured from the outer edge, the right half mirrors) ----
 static const CGFloat
@@ -153,7 +160,12 @@ static CAShapeLayer *shape(CALayer *parent) {
 }
 static CATextLayer *label(CALayer *parent, NSString *s) {
     CATextLayer *t = [CATextLayer layer];
-    t.string = s; t.alignmentMode = kCAAlignmentCenter; t.foregroundColor = k_text.CGColor; t.contentsScale = UIScreen.mainScreen.scale;
+    t.string = s; t.alignmentMode = kCAAlignmentCenter; t.foregroundColor = k_text.CGColor;
+#if TARGET_OS_VISION
+    t.contentsScale = 1.0;
+#else
+    t.contentsScale = UIScreen.mainScreen.scale;
+#endif
     [parent addSublayer:t]; return t;
 }
 static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   // keys shown only in the 3D layout
@@ -407,7 +419,9 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
 
 - (void)layoutSubviews {
     [super layoutSubviews];
+#if !TARGET_OS_VISION
     UIWindowScene *ws = self.window.windowScene; if (ws) atomic_store(&g_iface_orient, (int)ws.effectiveGeometry.interfaceOrientation);
+#endif
     CGFloat u = self.u;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     _controls.frame = self.layer.bounds;
