@@ -46,6 +46,25 @@ if [ "$PREPARE_XCODE" = YES ]; then
   # Source links follow repository edits; generated files and build products belong to this game only. Linked again each time: a project prepared from another checkout (a removed worktree) follows this one
   for item in Sources tools; do ln -sfn "$IOS_SOURCE/$item" "$IOS/$item" || die "link $item"; done
   cp "$IOS_SOURCE/project.yml" "$IOS/project.yml" || die "copy project template"
+  if [ "${DM_APP_PLATFORM:-ios}" = visionos ]; then
+    # Match native visionOS Xcode target setup in MacNativeGames.
+    python3 - "$IOS/project.yml" <<'PY_PLATFORM'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+for before, after in (
+    ('    iOS: "26.0"', '    visionOS: "26.0"'),
+    ('    platform: iOS', '    platform: visionOS'),
+    ('TARGETED_DEVICE_FAMILY: "1,2"', 'TARGETED_DEVICE_FAMILY: "7"'),
+    ('OTHER_CFLAGS: $(inherited) -mcpu=apple-a18', 'OTHER_CFLAGS: $(inherited) -mcpu=apple-a15'),
+    ('        UIRequiresFullScreen: true\n', ''),
+):
+    if before not in s: raise SystemExit(f'Vision Pro project template mismatch: {before!r}')
+    s = s.replace(before, after)
+p.write_text(s)
+PY_PLATFORM
+  fi
   cd "$IOS" || die "cd $IOS"
   DM_SCHEME_NAME="$(echo "$DM_DISPLAY_NAME" | tr '/:' '__') ($GAME)"   # the scheme file is named after it
 
@@ -113,7 +132,7 @@ mkdir -p Gen/dm/font && cp "${STD_FONT:-/System/Library/Fonts/Supplemental/Arial
 # The catalog is always created (the project always lists it, see project.yml); without an icon it stays empty and DM_APPICON is not set
 ICON=${DM_ICON:-$(dirname "$ROMFS")/icon.jpg}
 mkdir -p Gen/Assets.xcassets && printf '{"info":{"author":"xcode","version":1}}\n' > Gen/Assets.xcassets/Contents.json || die "asset catalog"
-if [ -f "$ICON" ]; then
+if [ -f "$ICON" ] && [ "${DM_APP_PLATFORM:-ios}" != visionos ]; then
   AI=Gen/Assets.xcassets/AppIcon.appiconset; mkdir -p "$AI" || die "mkdir $AI"
   sips -s format png -z 1024 1024 "$ICON" --out "$AI/icon.png" > /dev/null || die "sips: cannot convert the icon $ICON"
   printf '{"images":[{"filename":"icon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}\n' > "$AI/Contents.json"
@@ -139,7 +158,7 @@ if [ "$PREPARE_XCODE" = YES ]; then
   t "Xcode project: $IOS/DmIOS.xcodeproj"
   t "Xcode derived data: $XCODE_DD"
   t "scheme: $DM_SCHEME_NAME"
-  t "ready: select your Team in Signing & Capabilities, select a physical device, and Run (Release)"
+  if [ "${DM_APP_PLATFORM:-ios}" = visionos ]; then t "ready: select Team + physical Vision Pro, then Run (Release)"; else t "ready: select Team + iPhone/iPad, then Run (Release)"; fi
   exit 0
 fi
 
