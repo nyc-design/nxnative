@@ -51,6 +51,7 @@ if [ "$PREPARE_XCODE" = YES ]; then
   python3 "$IOS_SOURCE/tools/apple_platform.py" project "$IOS/project.yml" || die "project template for $APP_PLATFORM"   # unchanged for iOS
   cd "$IOS" || die "cd $IOS"
   DM_SCHEME_NAME="$(echo "$DM_DISPLAY_NAME" | tr '/:' '__') ($GAME)"   # the scheme file is named after it
+  [ "$APP_PLATFORM" = ios ] || DM_SCHEME_NAME="$DM_SCHEME_NAME Vision Pro"   # apart from the same game's iPhone scheme in the workspace
 
 else DM_SCHEME_NAME=DmIOS
   # The unsigned IPA is built from the iOS template in dm/ios itself; a Vision Pro build is a prepared project that Xcode signs and installs

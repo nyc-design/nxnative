@@ -89,6 +89,12 @@ class NspScriptTests(unittest.TestCase):
     def test_layer_shader_count_reads_the_headset_sdk(self):
         self.assertIn("r'(?:iphoneos|xros): (\\d+)'", Path(self.build.__file__).read_text())
 
+    def test_headset_shaders_have_their_own_folder(self):
+        with patch.dict(os.environ, {'DM_APP_PLATFORM': 'visionos'}): self.assertEqual(self.build.device_dir(), 'visionos')
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('DM_APP_PLATFORM', None)
+            self.assertEqual(self.build.device_dir(), 'ios')   # the iPhone's folder is unchanged, so its builds are reused
+
     def test_missing_visionos_sdk_names_the_platform_to_install(self):
         import subprocess
         calls = []

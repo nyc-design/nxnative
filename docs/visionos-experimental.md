@@ -36,17 +36,17 @@ which xcodegen
    ```
 
    `--platform visionos` implies `--prepare-xcode` and keeps the extracted files. `--romfs separate` leaves the game files out of the app, so each install sends only the code and shaders. The last lines print the workspace, the bundle ID and the `push_romfs.sh` command for step 4.
-2. Open `~/Games/NxNative.xcworkspace` (beside the NSP folder). Select the scheme **Super Mario Odyssey (0100000000010000)**. Under the **DmIOS** target's **Signing & Capabilities**, select your team.
+2. Open `~/Games/NxNative.xcworkspace` (beside the NSP folder). Select the scheme **Super Mario Odyssey (0100000000010000) Vision Pro**. Under the **DmIOS** target's **Signing & Capabilities**, select your team.
 3. Choose your Apple Vision Pro as the run destination, then **Run**. The scheme runs **Release**. The first build compiles the host (several minutes).
 4. With the app installed, copy the game files once per game version. Find the headset's identifier with `xcrun devicectl list devices`, then run the command step 1 printed:
 
    ```
-   scripts/push_romfs.sh <device identifier> <bundle ID> "<NSP folder>/0100000000010000_build/extract/<version>/RomFS.img"
+   scripts/push_romfs.sh <device identifier> org.nxnative.0100000000010000.visionos "<NSP folder>/0100000000010000_build/extract/<version>/RomFS.img"
    ```
 
 5. Open the app on the headset. The first start compiles the game's GPU pipelines, so expect a slow start with stutter the first time each area loads.
 
-A Vision Pro project replaces an iPhone project prepared from the same NSP folder (`<title ID>_build/xcode`): prepare again without `--platform visionos` to switch back.
+A game's Vision Pro build keeps its own folders in `<title ID>_build`: `shader/visionos` (the `xros` libraries), `xcode-visionos` and `xcode-derived-data-visionos`, and its default bundle ID is `org.nxnative.<title ID>.visionos`. The extraction, the rewritten code and the Mac shader cache are shared. So the same NSP folder can also build the iPhone IPA or iPhone Xcode project (without `--platform visionos`), before or after, and each reuses what the other made; the shader translation, which is done per device, runs again. Run one build at a time per NSP folder: they share those stages' outputs.
 
 ## Signing
 
@@ -75,6 +75,7 @@ xcrun devicectl device copy from --device <device identifier> --domain-type appD
 - The project template's `platform: visionOS`, deployment target visionOS 26, device family 7, `-mcpu=apple-a15` (the M2's core generation, which has the LSE atomics the host assembly needs), no `UIRequiresFullScreen`. A template change that drops one of these lines stops the build instead of producing an iPhone app.
 - No IOKit in the link line (the host uses it only on the Mac).
 - Shader libraries for the `xros` SDK ([`ios_metal.py`](../dm/ios/tools/ios_metal.py), `vk_shaders.py`, `gl_shaders.py`). The SDK is part of the library cache keys, so iPhone and headset libraries never mix.
+- Its own shader folder, Xcode project, derived data, scheme name (`… Vision Pro`) and bundle ID (`….visionos`), so it sits beside the game's iPhone build.
 - No offline pipeline archive: it is compiled for iPhone GPUs.
 - No app icon: visionOS icons are layered image stacks.
 

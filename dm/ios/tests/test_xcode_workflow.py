@@ -29,7 +29,10 @@ class XcodePipelineTests(unittest.TestCase):
                 with self.subTest(graphics=graphics, derived=derived):
                     self.prepare_fixture(graphics, derived)
 
-    def prepare_fixture(self, graphics, derived):
+    def test_vision_pro_project_sits_beside_the_iphone_one(self):
+        self.prepare_fixture('nvn', False, visionos=True)
+
+    def prepare_fixture(self, graphics, derived, visionos=False):
         with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
             root = Path(temporary).resolve()
             (root / 'prod.keys').touch()
@@ -75,7 +78,8 @@ class XcodePipelineTests(unittest.TestCase):
             try:
                 with redirect_stdout(output):
                     code = build.cli([str(root), '-k', str(root / 'prod.keys'), '--prepare-xcode',
-                                      '--language', 'ja', '--no-show-fps', '--no-motion', '--progress', 'json'])
+                                      '--language', 'ja', '--no-show-fps', '--no-motion', '--progress', 'json']
+                                     + (['--platform', 'visionos'] if visionos else []))
             finally:
                 progress.close()
             self.assertEqual(code, 0)
@@ -92,8 +96,12 @@ class XcodePipelineTests(unittest.TestCase):
             self.assertEqual(environment['GFXAPI'], graphics)
             self.assertEqual(environment['DM_BUNDLE_ID'], 'com.example.saved')
             self.assertEqual(environment['DM_TEAM_ID'], 'ABCDEFGHIJ')
-            self.assertEqual(Path(environment['DM_XCODE_PROJECT_DIR']), root / f'{registered.id}_build/xcode')
+            suffix = '-visionos' if visionos else ''
+            self.assertEqual(Path(environment['DM_XCODE_PROJECT_DIR']), root / f'{registered.id}_build/xcode{suffix}')
+            self.assertEqual(Path(environment['DM_XCODE_DERIVED_DATA']), root / f'{registered.id}_build/xcode-derived-data{suffix}')
+            self.assertEqual(environment.get('DM_APP_PLATFORM'), 'visionos' if visionos else None)
             register.assert_called_once()
+            self.assertEqual(register.call_args.args[2], 'Fixture Game' + (' (Vision Pro)' if visionos else ''))
             self.assertEqual(mocks['derive_profile'].call_count, int(derived))
             if graphics == 'nvn':
                 self.assertEqual(mocks['split_shaders'].call_args.args[8], derived)
