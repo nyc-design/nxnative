@@ -89,6 +89,17 @@ class NspScriptTests(unittest.TestCase):
     def test_layer_shader_count_reads_the_headset_sdk(self):
         self.assertIn("r'(?:iphoneos|xros): (\\d+)'", Path(self.build.__file__).read_text())
 
+    def test_missing_visionos_sdk_names_the_platform_to_install(self):
+        import subprocess
+        calls = []
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1 if cmd[:2] == ['xcrun', '--sdk'] else 0, '/Applications/Xcode.app/Contents/Developer\n', '')
+        with patch.object(self.build.subprocess, 'run', run):
+            with self.assertRaisesRegex(self.build.BuildError, 'visionOS SDK is not installed.*downloadPlatform visionOS'):
+                self.build.check_ios_sdk({'DM_APP_PLATFORM': 'visionos'})
+        self.assertEqual(calls[0][:3], ['xcrun', '--sdk', 'xros'])
+
 
 if __name__ == '__main__':
     unittest.main()

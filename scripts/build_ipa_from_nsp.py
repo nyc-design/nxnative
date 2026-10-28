@@ -896,12 +896,13 @@ def check_prereqs(env, xlate, mac=False):   # mac: a Mac-only build (PLATFORM 'm
     if not shutil.which(sc, path=env.get('PATH')): raise BuildError(f'spirv-cross is missing or not executable: {sc}')
 
 
-def check_ios_sdk(env):   # Check the target SDK before expensive shader translation.
-    sdk = 'xros' if env.get('DM_APP_PLATFORM') == 'visionos' else 'iphoneos'
-    if subprocess.run(['xcrun', '--sdk', sdk, '--show-sdk-version'], capture_output=True, text=True, env=env).returncode == 0: return
+def check_ios_sdk(env):   # the device platform (iOS, or visionOS for --platform visionos) is a separate download in Xcode's Components; xcodebuild, the Metal toolchain and the macOS SDK can be there without it
+    visionos = env.get('DM_APP_PLATFORM') == 'visionos'
+    if subprocess.run(['xcrun', '--sdk', 'xros' if visionos else 'iphoneos', '--show-sdk-version'], capture_output=True, text=True, env=env).returncode == 0: return
     dev = subprocess.run(['xcode-select', '-p'], capture_output=True, text=True, env=env).stdout.strip()
     if 'CommandLineTools' in dev: raise BuildError(f'the selected developer folder is the Command Line Tools ({dev}), which have no iOS SDK: select Xcode with sudo xcode-select -s /Applications/Xcode.app')
-    raise BuildError(f'the {sdk} SDK is not installed: install its platform in Xcode → Settings → Components (visionOS for xros, otherwise iOS)')
+    if visionos: raise BuildError('the visionOS SDK is not installed: install the visionOS platform in Xcode → Settings → Components, or with xcodebuild -downloadPlatform visionOS')
+    raise BuildError('the iOS SDK is not installed: install the iOS platform in Xcode → Settings → Components, or with xcodebuild -downloadPlatform iOS')
 
 
 def check_translator(xlate, env):
