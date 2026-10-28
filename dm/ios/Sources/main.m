@@ -1,6 +1,7 @@
 // iOS App entry: set the environment (game files, saves, shader libraries), write the host log to Documents/log.txt, create the window (front_ios.m), then run the host's dm_main on a big-stack thread.
 // The game files (RomFS) ship inside the App at <App>/romfs; Documents/romfs.img (one image, scripts/push_romfs.sh) or a Documents/romfs folder is also accepted (lets you swap them without reinstalling).
 #import <UIKit/UIKit.h>
+#include <TargetConditionals.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -180,6 +181,13 @@ int front_ios_boot_ok(void) { return g_boot_ok; }
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     self.window.rootViewController = front_ios_root();
     [self.window makeKeyAndVisible];
+#if TARGET_OS_VISION
+    UIWindowSceneGeometryPreferencesVision *prefs = [[UIWindowSceneGeometryPreferencesVision alloc] initWithSize:CGSizeMake(1280, 720)];
+    prefs.resizingRestrictions = UIWindowSceneResizingRestrictionsUniform;
+    [(UIWindowScene *)scene requestGeometryUpdateWithPreferences:prefs errorHandler:^(NSError *error) {
+        NSLog(@"nxnative: Vision Pro window resize request: %@", error);
+    }];
+#endif
 }
 - (void)sceneWillResignActive:(UIScene *)s { front_ios_focus_event(0); }
 - (void)sceneDidEnterBackground:(UIScene *)s { front_ios_focus_event(1); }
