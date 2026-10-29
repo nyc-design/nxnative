@@ -121,7 +121,7 @@ def prepare(nsp_dir, dev, keys, team, prefix, extra):
         except ValueError: say(line.rstrip()); continue
         kind = ev.get('ev')
         if kind == 'result': result = ev
-        elif kind == 'say' and not ev['msg'].lstrip().startswith(SKIP_SAY): say('  ' + ev['msg'])
+        elif kind == 'say' and not re.sub(r'^\[\d\d:\d\d:\d\d\] ', '', ev['msg']).lstrip().startswith(SKIP_SAY): say('  ' + ev['msg'])
         elif kind == 'stage': say(f'  [{ev["k"]}/{ev["n"]}] {ev["name"]} …')
         elif kind == 'stage_end': say(f'  {"✓" if ev["ok"] else "✗"} {ev["name"]} ({ev["elapsed"]:.0f} s)' + (f': {ev["summary"]}' if ev.get('summary') else ''))
     if p.wait(): raise DeployError(f'build_ipa_from_nsp.py failed ({p.returncode}); see the lines above')
@@ -175,10 +175,23 @@ def need_push(state, key, ident, size, remote):   # copy unless this device got 
     return not (state.get(key) == ident and remote == size)
 
 
+def retrying(what, fn, tries=3):
+    """A device transfer over the network can drop (the headset taken off, Wi-Fi roaming): try again, after a pause, while the error is a dropped connection"""
+    for n in range(1, tries + 1):
+        try: return fn()
+        except DeployError as e:
+            if n == tries or not any(k in str(e) for k in DROPPED): raise
+            say(f'  {what}: the connection dropped; trying again in 10 s ({n + 1}/{tries}). Keep the device awake and unlocked')
+            time.sleep(10)
+
+
+DROPPED = ('Connection interrupted', 'unexpectedly closed', 'error 3002', 'Connection invalid', 'tunnel', 'timed out')
+
+
 def push_romfs(dev, bundle, img):
     say(f'copying the game files ({Path(img).stat().st_size / 2**30:.1f} GB) to {dev["name"]}: keep it unlocked; a cable is far faster than the network')
     t = time.time()
-    run(['bash', REPO / 'scripts/push_romfs.sh', dev['udid'], bundle, img])
+    retrying('game files', lambda: run(['bash', REPO / 'scripts/push_romfs.sh', dev['udid'], bundle, img]))
     say(f'  game files copied ({time.time() - t:.0f} s)')
 
 
@@ -247,7 +260,7 @@ def main(argv):
     say(f'  built {app.name} ({time.time() - t:.0f} s)')
     say(f'installing on {dev["name"]} …')
     t = time.time()
-    run(['xcrun', 'devicectl', 'device', 'install', 'app', '--device', dev['udid'], app])
+    retrying('install', lambda: run(['xcrun', 'devicectl', 'device', 'install', 'app', '--device', dev['udid'], app]))
     say(f'  installed ({time.time() - t:.0f} s)')
 
     img, pushed = res.get('romfs'), False
