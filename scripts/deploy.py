@@ -9,10 +9,11 @@
 # The team ID, bundle prefix and prod.keys given once are kept in ~/.config/nxnative/deploy.json for the next run; with no team ID anywhere, the team of the Apple Development
 #   certificate in the keychain is used when there is exactly one. The bundle prefix names new games' apps (<prefix>.<title ID>, .visionos added for Apple Vision Pro):
 #   it must be one your team can register (org.nxnative.* is taken). A game prepared before keeps the bundle ID saved in its Xcode project.
+# The app is installed again only when the build changed since this Mac last installed it on that device (<id>_build/deploy_state.json) or the device lacks it.
 # The game files are copied only when the device holds no file of the image's size (the app checks the image's identity when it starts; when its log says the image is unusable,
 #   they are copied again and the app restarted); --push-romfs copies them anyway. Over a slow network, --no-push-romfs installs only and says how to AirDrop the image instead:
 #   into the app's folder in the device's Files app, named romfs.img; the next run then finds it and launches the game.
-import argparse, json, os, re, subprocess, sys, tempfile, time
+import argparse, hashlib, json, os, re, subprocess, sys, tempfile, time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -162,6 +163,18 @@ def xcode_build(res, dev, log):
 
 # ---- device steps ----
 
+def app_fingerprint(app):   # the built app as files, sizes and times: an xcodebuild that changed nothing leaves it as it was
+    h = hashlib.sha256()
+    for p in sorted(Path(app).rglob('*')):
+        if p.is_file(): st = p.stat(); h.update(f'{p.relative_to(app)}\0{st.st_size}\0{st.st_mtime_ns}\n'.encode())
+    return h.hexdigest()
+
+
+def installed(dev, bundle):
+    try: return bool(devicectl_json('device', 'info', 'apps', '--device', dev['udid'], '--bundle-id', bundle)['apps'])
+    except DeployError: return False
+
+
 def remote_size(dev, bundle, name):
     try: files = devicectl_json('device', 'info', 'files', '--device', dev['udid'], '--domain-type', 'appDataContainer', '--domain-identifier', bundle, '--subdirectory', 'Documents')['files']
     except DeployError: return None
@@ -231,6 +244,7 @@ def parse_args(argv):
     ap.add_argument('--push-romfs', action='store_true', help='copy the game files even when the device has them')
     ap.add_argument('--no-push-romfs', action='store_true', help='never copy the game files: when the device lacks them, say how to AirDrop them (much faster than a slow network) and stop')
     ap.add_argument('--no-launch', action='store_true', help='install only')
+    ap.add_argument('--no-install', action='store_true', help='build but do not install: the device already has this build (installed by hand or by an interrupted run)')
     ap.add_argument('--log-secs', type=int, default=60, help='seconds to let the game run before fetching its log (0: no log; default 60)')
     return ap.parse_known_args(argv)
 
@@ -259,10 +273,20 @@ def main(argv):
     t = time.time()
     app = xcode_build(res, dev, logs / f'deploy_xcodebuild_{platform}.log')
     say(f'  built {app.name} ({time.time() - t:.0f} s)')
-    say(f'installing on {dev["name"]} …')
-    t = time.time()
-    retrying('install', lambda: run(['xcrun', 'devicectl', 'device', 'install', 'app', '--device', dev['udid'], app]))
-    say(f'  installed ({time.time() - t:.0f} s)')
+    # an install sends the whole app (1.2 GB for Odyssey: 15 minutes over a slow network), so the same build is not sent again
+    state_file, key = work / 'deploy_state.json', f'{dev["udid"]} {bundle}'
+    try: state = json.loads(state_file.read_text())
+    except (OSError, ValueError): state = {}
+    fp = app_fingerprint(app)
+    if args.no_install: say('install: skipped (--no-install); this build is taken as the one on the device')
+    elif state.get(key) == fp and installed(dev, bundle): say(f'install: {dev["name"]} already has this build')
+    else:
+        say(f'installing on {dev["name"]} ({sum(p.stat().st_size for p in app.rglob("*") if p.is_file()) / 2**30:.1f} GB) …')
+        t = time.time()
+        state.pop(key, None); state_file.write_text(json.dumps(state, indent=1))
+        retrying('install', lambda: run(['xcrun', 'devicectl', 'device', 'install', 'app', '--device', dev['udid'], app]))
+        say(f'  installed ({time.time() - t:.0f} s)')
+    state[key] = fp; state_file.write_text(json.dumps(state, indent=1))
 
     img, pushed = res.get('romfs'), False
     if img:
