@@ -1,0 +1,77 @@
+# Keeps this fork's main up to date with the original project (seedds/nxnative): daily and by hand, it merges upstream main into main and pushes the merge straight to main.
+# The fork changes a shader chain file (dm/ios/tools/ios_metal.py, for visionOS), so its dm/gfx/nvn/dmsh_chain.h differs from upstream's and conflicts whenever upstream regenerates
+# it: the job resolves that one file by regenerating it (dmsh_chain.py --header only hashes files, so it runs here) and stops on any other conflict, listing the files in the job summary
+# for a manual merge (git merge upstream/main on a checkout of main).
+# Token: GITHUB_TOKEN cannot push a merge that changes .github/workflows, and its pushes start no other workflow. A SYNC_TOKEN secret (a personal access token with repo and workflow
+# scopes, or a fine-grained one with contents and workflows read/write on this repository) avoids both; without it the job uses GITHUB_TOKEN and starts tests.yml itself.
+name: sync-upstream
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+# Actions are pinned to commit SHAs (the tag in the comment), as in tests.yml.
+jobs:
+  sync:
+    name: Merge seedds/nxnative main into main
+    if: github.repository == 'nyc-design/nxnative'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      UPSTREAM: https://github.com/seedds/nxnative.git
+      CHAIN_HEADER: dm/gfx/nvn/dmsh_chain.h
+      HAS_SYNC_TOKEN: ${{ secrets.SYNC_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Merge upstream main
+        id: merge
+        run: |
+          git -c protocol.version=2 fetch --no-tags "$UPSTREAM" main
+          up=$(git rev-parse FETCH_HEAD)
+          if git merge-base --is-ancestor "$up" HEAD; then
+            echo "main already contains upstream ${up:0:12}" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # The repository's commit identity (AGENTS.md)
+          git config user.name seedds; git config user.email seedds@gmail.com
+          msg="Merge upstream seedds/nxnative main (${up:0:12})"
+          if ! git merge --no-ff --no-edit -m "$msg" "$up"; then
+            conflicts=$(git diff --name-only --diff-filter=U)
+            if [ "$conflicts" != "$CHAIN_HEADER" ]; then
+              { echo "### Upstream merge needs a manual resolution"; echo; echo "Upstream ${up:0:12} conflicts with main in:"; echo; echo "$conflicts" | sed 's/^/- `/; s/$/`/'; } >> "$GITHUB_STEP_SUMMARY"
+              git merge --abort; exit 1
+            fi
+            python3 dm/gfx/tools/dmsh_chain.py --header
+            git add "$CHAIN_HEADER"; git commit --no-edit
+          fi
+          # A clean merge can still combine chain changes from both sides: the header must match the merged tree (dm/tools/tests/test_nsp_chain.py)
+          python3 dm/gfx/tools/dmsh_chain.py --header
+          if ! git diff --quiet -- "$CHAIN_HEADER"; then git add "$CHAIN_HEADER"; git commit --amend --no-edit; fi
+          git push origin HEAD:refs/heads/main
+          { echo "Merged upstream ${up:0:12} into main as $(git rev-parse --short=12 HEAD):"; echo; git log --oneline --no-merges "HEAD^1..$up" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      # A push with GITHUB_TOKEN starts no workflow, so start the tests on the merged main here (a SYNC_TOKEN push starts them by itself)
+      - name: Run the tests on the merged main
+        if: steps.merge.outputs.pushed == 'true' && env.HAS_SYNC_TOKEN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run tests.yml --ref main -R "$GITHUB_REPOSITORY"
