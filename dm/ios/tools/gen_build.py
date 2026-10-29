@@ -5,6 +5,7 @@
 #                     OTHER_CFLAGS (-D), frameworks (Cocoa is replaced by what the UIKit side already has, skipped)
 # Usage: gen_build.py <dm/host dir> <Gen dir>
 import os, shlex, subprocess, sys
+import apple_platform
 host, gen = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
 subprocess.run(['make', '-s', '-C', host, 'game_profile'], check=True)   # generate the game profile header for real first (make -n below only prints; GAME comes from the environment)
 cmd = subprocess.run(['make', '-s', '-n', '-B', '-C', host, 'dmhost'], capture_output=True, text=True, check=True).stdout
@@ -39,4 +40,4 @@ for s in srcs:
     os.symlink(s, f'{gen}/src/{flat}')
 print('HEADER_SEARCH_PATHS = $(inherited) ' + ' '.join(f'"{d}"' for d in incs + dirs))
 print('OTHER_CFLAGS = $(inherited) ' + ' '.join(defs))
-print('DM_FRAMEWORKS = ' + ' '.join(f'-framework {f}' for f in fws if f != 'Cocoa'))
+print('DM_FRAMEWORKS = ' + ' '.join(f'-framework {f}' for f in apple_platform.frameworks(fws) if f != 'Cocoa'))   # visionOS: without the Mac-only ones it lacks (IOKit)

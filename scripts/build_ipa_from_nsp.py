@@ -45,7 +45,8 @@ BUNDLE_ID = ''                          # the app's bundle ID (empty = saved per
 ROMFS = 'bundle'                        # 'bundle' = the game files go into the IPA (or the Xcode app), as always; 'separate' = they stay out (DM_COPY_ROMFS=NO): the IPA is small, and its rebuilds do not pack or send the RomFS again.
                                         #   Copy it to the phone once per game version with the scripts/push_romfs.sh command printed at the end (the app checks that the image is the one it was built for)
 PREPARE_XCODE = False                   # prepare a per-game Xcode project and add it to the workspace instead of packing an IPA; requires KEEP_EXTRACTED
-PLATFORM = 'ios'                        # 'ios' = the IPA (or the Xcode project); 'mac-app' = a double-clickable Mac app of the game; 'mac' = development: build only what running the game on this Mac needs (Mac shaders, the Mac host), no iOS shaders,
+PLATFORM = 'ios'                        # 'ios' = the IPA (or the Xcode project); 'visionos' = an Xcode project for Apple Vision Pro (experimental, docs/visionos-experimental.md: implies PREPARE_XCODE and KEEP_EXTRACTED);
+                                        #   'mac-app' = a double-clickable Mac app of the game; 'mac' = development: build only what running the game on this Mac needs (Mac shaders, the Mac host), no iOS shaders,
                                         #   Xcode project or IPA; keeps the extracted files and prints the command that runs the game (needs Apple silicon)
 MAC_SIGN = ''                            # PLATFORM 'mac-app': the codesign identity for the app, e.g. 'Developer ID Application: <name> (<team>)' (empty = ad-hoc); never with the hardened runtime
 TEAM_ID = ''                            # optional Apple team ID; empty = DM_TEAM_ID environment, saved Xcode selection, or select in Xcode
@@ -887,7 +888,7 @@ def check_prereqs(env, xlate, mac=False):   # mac: a Mac-only build (PLATFORM 'm
     gone = [f'{t} ({how})' for t, how in tools.items() if not shutil.which(t, path=env['PATH'])]
     if gone: raise BuildError('tools not found: ' + ', '.join(gone))
     if not mac: check_ios_sdk(env)   # before the Metal check, whose message would blame the Metal toolchain
-    mtl = subprocess.run(['xcrun', '-sdk', 'macosx' if mac else 'iphoneos', 'metal', '--version'], capture_output=True, text=True, env=env)   # Xcode 26 and later install the Metal toolchain separately
+    mtl = subprocess.run(['xcrun', '-sdk', 'macosx' if mac else ('xros' if env.get('DM_APP_PLATFORM') == 'visionos' else 'iphoneos'), 'metal', '--version'], capture_output=True, text=True, env=env)   # Xcode 26 and later install the Metal toolchain separately
     if mtl.returncode: raise BuildError(f'the Metal compiler does not run ({(mtl.stderr.strip().splitlines() or ["no output"])[-1]}): install it with xcodebuild -downloadComponent MetalToolchain')
     if not xlate.exists(): raise BuildError(f'the shader translator is missing from the repository: {xlate}')
     check_translator(xlate, env)
@@ -895,10 +896,12 @@ def check_prereqs(env, xlate, mac=False):   # mac: a Mac-only build (PLATFORM 'm
     if not shutil.which(sc, path=env.get('PATH')): raise BuildError(f'spirv-cross is missing or not executable: {sc}')
 
 
-def check_ios_sdk(env):   # the iOS platform is a separate download in Xcode's Components; xcodebuild, the Metal toolchain and the macOS SDK can be there without it
-    if subprocess.run(['xcrun', '--sdk', 'iphoneos', '--show-sdk-version'], capture_output=True, text=True, env=env).returncode == 0: return
+def check_ios_sdk(env):   # the device platform (iOS, or visionOS for --platform visionos) is a separate download in Xcode's Components; xcodebuild, the Metal toolchain and the macOS SDK can be there without it
+    visionos = env.get('DM_APP_PLATFORM') == 'visionos'
+    if subprocess.run(['xcrun', '--sdk', 'xros' if visionos else 'iphoneos', '--show-sdk-version'], capture_output=True, text=True, env=env).returncode == 0: return
     dev = subprocess.run(['xcode-select', '-p'], capture_output=True, text=True, env=env).stdout.strip()
     if 'CommandLineTools' in dev: raise BuildError(f'the selected developer folder is the Command Line Tools ({dev}), which have no iOS SDK: select Xcode with sudo xcode-select -s /Applications/Xcode.app')
+    if visionos: raise BuildError('the visionOS SDK is not installed: install the visionOS platform in Xcode → Settings → Components, or with xcodebuild -downloadPlatform visionOS')
     raise BuildError('the iOS SDK is not installed: install the iOS platform in Xcode → Settings → Components, or with xcodebuild -downloadPlatform iOS')
 
 
@@ -1711,7 +1714,7 @@ def spirv_cross(repo, env=None):   # resolve the same selection the shader tools
 
 def toolchain(repo, env=None):   # Metal is a separate Xcode download: its version and SDK must invalidate reuse too
     return (('cmd', ['xcodebuild', '-version']), ('files', [spirv_cross(repo, env)]),
-            *(('cmd', ['xcrun', '-sdk', sdk, *args]) for sdk in ('macosx', 'iphoneos')
+            *(('cmd', ['xcrun', '-sdk', sdk, *args]) for sdk in ('macosx', 'xros' if (env or os.environ).get('DM_APP_PLATFORM') == 'visionos' else 'iphoneos')
               for args in (['metal', '--version'], ['metallib', '--version'], ['--show-sdk-version'], ['--show-sdk-build-version'])))
 
 
@@ -1722,7 +1725,7 @@ def build_shaders(py, repo, sh, xlate, env, logs, g, pkg_key=None, mac=False):
     sh/mac-b-<chain>.key (not in sh/cache, whose b-* entries dmsh_build.py reads as library folders). Each target writes only its own key; either is taken only
     while the Mac sources and reflection carry a full build's stamp (inputs.tsv) for c1_full.tsv and cb_extent.tsv to name (chain_tables).
     Switching targets translates again (the per-shader keys include the iOS compile convention); the Metal compile cache (dmsh_mtlcache.py) reuses previously compiled MSL for that target"""
-    ios, log = sh / 'ios', logs / 'dmsh_build.log'
+    ios, log = sh / device_dir(), logs / 'dmsh_build.log'
     PROG.stage('Mac shaders' if mac else 'iOS shaders')
     chain = chain_of(repo)
     out = sh / 'cache' if mac else ios
@@ -1799,12 +1802,16 @@ def shader_regressions(py, repo, lib_dir, chain, logs):
                      'ALLOW_SHADER_REGRESSIONS = True (--allow-shader-regressions) packs the app without those shaders')
 
 
+def device_dir():   # the device's folder in <id>_build/shader: Apple Vision Pro's libraries (xros) stay apart from the iPhone's, so both builds of one game can be kept
+    return 'visionos' if os.environ.get('DM_APP_PLATFORM') == 'visionos' else 'ios'
+
+
 def layer_shaders(py, repo, api, name, roots, sh, key, logs, env, mac):
     """What build_vk_shaders and build_gl_shaders share: dm/gfx/tools/<api>_shaders.py on the roots → sh/<api>/ for the Mac and, unless mac (a Mac-only build), sh/ios/<api>/ for the iPhone.
     Returns the folder the host (DM_MSL_DIR) or build_ipa.sh (MSL_IOS) takes the libraries from. key: the inputs' fingerprint (None never reuses). The iOS libraries' key is sh/ios/<api>.key,
     the Mac's sh/<api>.key, which an iOS build writes too (it builds both), so a Mac-only build is reused after either; an iOS build after a Mac-only one translates again.
     Otherwise the old output is deleted first, so a failed run leaves nothing for build_ipa.sh or the host to pick up; the translator's temporary files go to WORK (on the NSP folder's volume)"""
-    ios = sh / 'ios'; out = sh if mac else ios
+    ios = sh / device_dir(); out = sh if mac else ios
     kf, kmac, lib, log = ios / f'{api}.key', sh / f'{api}.key', out / api / f'{api}_shaders.metallib', logs / f'{api}_shaders.log'
     note = next((n for k in ((kmac, kf) if mac else (kf,)) if (n := reused(k, key)) is not None), None) if key else None
     if lib.is_file() and note is not None:
@@ -1814,7 +1821,7 @@ def layer_shaders(py, repo, api, name, roots, sh, key, logs, env, mac):
     if not mac: rmtree(kf); rmtree(ios / api)
     run([py, repo / f'dm/gfx/tools/{api}_shaders.py', *roots, sh] + ([] if mac else ['--ios', ios]), log, env=dict(env, TMPDIR=env['WORK']))
     if not lib.is_file(): raise BuildError(f'no {"Mac" if mac else "iOS"} {name} shader library in {lib.parent}')
-    m = re.search(r'macosx: (\d+)' if mac else r'iphoneos: (\d+)', log.read_text(errors='replace'))
+    m = re.search(r'macosx: (\d+)' if mac else r'(?:iphoneos|xros): (\d+)', log.read_text(errors='replace'))
     note = f'{int(m.group(1)):,} shaders for the Mac' + ('' if mac else ' and iOS') if m else ''
     if key:
         for k in (kmac,) if mac else (kf, kmac): k.write_text(f'{key}\n{note}\n')
@@ -2053,7 +2060,8 @@ def parse_args(argv):
     ap.add_argument('--romfs', choices=('bundle', 'separate'), help='bundle = the game files go into the IPA (default: the ROMFS setting, bundle); separate = they stay out of the IPA and the Xcode app: the build is small and fast, and the RomFS image '
                     'is copied to the phone once per game version with the scripts/push_romfs.sh command printed at the end (the app refuses an image of another version)')
     ap.add_argument('--prepare-xcode', action='store_true', help='prepare a per-game Xcode project and add it to the shared workspace instead of packing an IPA (requires keeping extracted files)')
-    ap.add_argument('--platform', choices=('ios', 'mac', 'mac-app'), help='ios = the IPA (or the Xcode project); mac = for development: build only what running the game on this Mac needs (the Mac shaders and the Mac host, '
+    ap.add_argument('--platform', choices=('ios', 'visionos', 'mac', 'mac-app'), help='ios = the IPA (or the Xcode project); visionos = an Xcode project for Apple Vision Pro (experimental; implies --prepare-xcode and --keep-extracted); '
+                    'mac = for development: build only what running the game on this Mac needs (the Mac shaders and the Mac host, '
                     'no iOS shaders, Xcode project or IPA), keep the extracted files and print the command that runs the game; mac-app = what mac builds, then a self-contained, double-clickable '
                     'Mac app of the game (default: <game name>.app in the NSP folder, -o names another) (default: the PLATFORM setting, ios)')
     ap.add_argument('--mac-sign', help='--platform mac-app: the codesign identity for the app, e.g. "Developer ID Application: <name> (<team>)" (default: the MAC_SIGN setting, else ad-hoc)')
@@ -2147,7 +2155,17 @@ def main(args=None):
     repo = find_repo(here)
     prepare_xcode = args.prepare_xcode or PREPARE_XCODE
     platform = args.platform or PLATFORM
-    if platform not in ('ios', 'mac', 'mac-app'): raise BuildError(f'PLATFORM / --platform must be ios, mac or mac-app: {platform}')
+    if platform not in ('ios', 'visionos', 'mac', 'mac-app'): raise BuildError(f'PLATFORM / --platform must be ios, visionos, mac or mac-app: {platform}')
+    # Apple Vision Pro: the iOS build with the device platform switched (DM_APP_PLATFORM, read by build_ipa.sh and the shader tools; dm/ios/tools/apple_platform.py), as a project Xcode signs and installs
+    if platform == 'visionos': os.environ['DM_APP_PLATFORM'] = 'visionos'
+    if os.environ.get('DM_APP_PLATFORM') not in (None, '', 'ios', 'visionos'): raise BuildError(f'DM_APP_PLATFORM must be ios or visionos: {os.environ["DM_APP_PLATFORM"]}')
+    visionos = os.environ.get('DM_APP_PLATFORM') == 'visionos'
+    if visionos and platform in ('mac', 'mac-app'): raise BuildError(f'DM_APP_PLATFORM=visionos cannot be combined with --platform {platform}')
+    if visionos:
+        platform = 'ios'
+        if not prepare_xcode: say('Apple Vision Pro: preparing an Xcode project (Xcode signs it and installs it on the headset)'); prepare_xcode = True
+        if args.keep_extracted is False: raise BuildError('--platform visionos prepares an Xcode project, which builds from the extracted files: it cannot be combined with --no-keep-extracted')
+        args.keep_extracted = True
     mac = platform in ('mac', 'mac-app')   # the Mac's shaders and host only: no iOS shaders, Xcode project or IPA (mac_run prints the command; mac-app packs a Mac app, mac_app)
     mac_pack = platform == 'mac-app'
     if args.mac_sign and not mac_pack: raise BuildError('--mac-sign signs the Mac app: it needs --platform mac-app')
@@ -2224,7 +2242,9 @@ def main(args=None):
     if shadowed and not (args.out or OUT_IPA): out_ipa = out_ipa.with_name(out_ipa.stem + '-provisional.ipa')   # never over the IPA of the game's real profile
     if mac_pack and (args.out or OUT_IPA) and out_ipa.suffix != '.app': raise BuildError(f'the Mac app (-o / OUT_IPA) must end in .app: {out_ipa}')
     work = nsp_dir / f'{g.id}_build'
-    project = work / 'xcode/DmIOS.xcodeproj'
+    # Apple Vision Pro's project, derived data and default bundle ID differ from the iPhone's: both projects of one game can sit in the workspace
+    project = work / ('xcode-visionos' if visionos else 'xcode') / 'DmIOS.xcodeproj'
+    xcode_dd = work / ('xcode-derived-data-visionos' if visionos else 'xcode-derived-data')
     workspace = Path(os.path.expanduser(args.xcode_workspace or XCODE_WORKSPACE)).resolve() if (args.xcode_workspace or XCODE_WORKSPACE) else nsp_dir.parent / 'NxNative.xcworkspace'
     if prepare_xcode and workspace.suffix != '.xcworkspace': raise BuildError('--xcode-workspace must end in .xcworkspace')
     saved_signing = {}
@@ -2293,7 +2313,7 @@ def main(args=None):
     # the app name and bundle ID both come from the base NSP: the game name in its control data, and a bundle ID from its title ID; a setting / the command line overrides them
     app_name = args.app_name or APP_NAME or nacp.name(base / 'control.nacp')
     if not app_name and not (mac and not mac_pack): raise BuildError(f'no game name in the base extraction ({base / "control.nacp"}; an older extraction did not save it: delete extract/ and run again, or give --app-name)')
-    bundle_id = args.bundle_id or BUNDLE_ID or saved_signing.get('PRODUCT_BUNDLE_IDENTIFIER') or f'org.nxnative.{app:016x}'
+    bundle_id = args.bundle_id or BUNDLE_ID or saved_signing.get('PRODUCT_BUNDLE_IDENTIFIER') or f'org.nxnative.{app:016x}' + ('.visionos' if visionos else '')
     team_id = args.team_id or TEAM_ID or env.get('DM_TEAM_ID') or saved_signing.get('DEVELOPMENT_TEAM') or '0000000000'
     if prepare_xcode:
         try: xcode_projects.check_bundle_id(workspace, project, bundle_id)
@@ -2372,7 +2392,7 @@ def main(args=None):
 
     if not prepare_xcode and free_gb(out_ipa.parent) < 5: raise BuildError(f'less than 5 GB free on the volume of {out_ipa.parent}')
     say('preparing the Xcode project' if prepare_xcode else f'building the IPA → {out_ipa}')
-    ipa_env = dict(env, GAME=g.id, W=str(work / 'ipa'), PATCHED=str(patched), ROMFS=str(rfs.source(game)), MSL_IOS=str(ios), GFXAPI=gfx, FONT_PY=py, DM_DISPLAY_NAME=app_name, DM_BUNDLE_ID=bundle_id, AOC=str(aoc or ''), DM_XCODE_DERIVED_DATA=str(work / 'xcode-derived-data'), DM_TEAM_ID=team_id, DM_LANG=lang)
+    ipa_env = dict(env, GAME=g.id, W=str(work / 'ipa'), PATCHED=str(patched), ROMFS=str(rfs.source(game)), MSL_IOS=str(ios), GFXAPI=gfx, FONT_PY=py, DM_DISPLAY_NAME=app_name, DM_BUNDLE_ID=bundle_id, AOC=str(aoc or ''), DM_XCODE_DERIVED_DATA=str(xcode_dd), DM_TEAM_ID=team_id, DM_LANG=lang)
     if prepare_xcode: ipa_env['DM_XCODE_PROJECT_DIR'] = str(project.parent)
     separate = romfs_mode == 'separate'
     if separate: ipa_env['DM_COPY_ROMFS'] = 'NO'; say('game files: separate (DM_COPY_ROMFS=NO), left out of the app; the image stays at ' + str(rfs.source(game)))
@@ -2385,21 +2405,25 @@ def main(args=None):
     gpus = (args.gpu or PSO_GPUS).strip()
     if gpus and not re.fullmatch(r'none|(applegpu_)?g\w+(,(applegpu_)?g\w+)*', gpus): raise BuildError(f'--gpu / PSO_GPUS takes GPU architectures such as g18p,g17p, or none: {gpus}')
     if not gpus: gpus = 'g18p' if g.get('pso_mtl4', 'off') == 'on' else 'none'   # by the profile, as build_ipa.sh decides without DM_PSO_GPUS: only the Metal 4 path reads the archive on iOS
+    if visionos:   # the archive is compiled for iPhone GPUs (metal-tt per architecture); the headset builds the bases on its first start
+        if gpus != 'none': say('Apple Vision Pro: no pipeline archive (it is made for iPhone GPUs)')
+        gpus = 'none'
     ipa_env['DM_PSO_GPUS'] = gpus
     if gfx == 'nvn': say(f'pipeline archive: {"none, the device builds the bases on its first start if it takes the Metal 4 path (--gpu g18p builds one)" if gpus == "none" else gpus + " (made on this Mac with metal-tt; --gpu none leaves it out)"}')
     if show_fps: say('frame-rate counter: on (DM_SHOW_FPS=0 in the app\'s Documents/env.txt turns it off)')
     if prepare_xcode:
         PROG.stage('prepare Xcode')
         run(['bash', repo / 'dm/ios/tools/build_ipa.sh', '--prepare-xcode'], logs / 'prepare_xcode.log', env=ipa_env)
-        try: xcode_projects.register_project(workspace, project, app_name, workspace.with_name(workspace.stem + '-derived-data'))
+        try: xcode_projects.register_project(workspace, project, app_name + (' (Vision Pro)' if visionos else ''), workspace.with_name(workspace.stem + '-derived-data'))
         except ValueError as e: raise BuildError(str(e)) from e
         PROG.end()
         rmtree(work / 'tmp')
         say(f'ready: {workspace}')
         say(f'game project: {project}')
-        say(f'Xcode derived data: {work / "xcode-derived-data"}')
+        say(f'Xcode derived data: {xcode_dd}')
         if separate: say_push_romfs(rfs.source(game), bundle_id)
-        say('choose the game scheme in Xcode, select your Team and iPhone or iPad, then Run (Release)')
+        say('choose the game scheme in Xcode, select your Team and your Apple Vision Pro, then Run (Release)' if visionos else
+            'choose the game scheme in Xcode, select your Team and iPhone or iPad, then Run (Release)')
         report_profile_status(g, reg, pkg_ver, derived, provisional, 'Xcode project', patched)
         return
     watch = IpaWatch(repo, work / 'ipa', out_ipa)

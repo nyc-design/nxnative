@@ -38,6 +38,8 @@ VNACP=$(dirname "$ROMFS")/control.nacp; [ -f "$VNACP" ] || VNACP=$W/data/v0/cont
 export LC_ALL=C DM_BUNDLE_ID=${DM_BUNDLE_ID:-org.nxnative.$(echo "$GAME" | tr 'A-Z' 'a-z')} DM_DISPLAY_NAME DM_APP_VERSION DM_APP_CATEGORY=$(gp app_category) DM_TEAM_ID=${DM_TEAM_ID:-0000000000}   # placeholder identity: unsigned, the install tool replaces it
 if [ "${DM_SHOW_FPS:-0}" = 1 ]; then export DM_SHOW_FPS=YES; else export DM_SHOW_FPS=NO; fi
 export DM_LANG=${DM_LANG:-en-US}
+# DM_APP_PLATFORM=visionos builds for Apple Vision Pro (experimental; docs/visionos-experimental.md): tools/apple_platform.py has what differs from iOS
+APP_PLATFORM=$(python3 "$IOS_SOURCE/tools/apple_platform.py" name) || die "DM_APP_PLATFORM"
 if [ "$PREPARE_XCODE" = YES ]; then
   IOS=${DM_XCODE_PROJECT_DIR:-$W/xcode}
   mkdir -p "$IOS" || die "mkdir $IOS"
@@ -46,10 +48,14 @@ if [ "$PREPARE_XCODE" = YES ]; then
   # Source links follow repository edits; generated files and build products belong to this game only. Linked again each time: a project prepared from another checkout (a removed worktree) follows this one
   for item in Sources tools; do ln -sfn "$IOS_SOURCE/$item" "$IOS/$item" || die "link $item"; done
   cp "$IOS_SOURCE/project.yml" "$IOS/project.yml" || die "copy project template"
+  python3 "$IOS_SOURCE/tools/apple_platform.py" project "$IOS/project.yml" || die "project template for $APP_PLATFORM"   # unchanged for iOS
   cd "$IOS" || die "cd $IOS"
   DM_SCHEME_NAME="$(echo "$DM_DISPLAY_NAME" | tr '/:' '__') ($GAME)"   # the scheme file is named after it
+  [ "$APP_PLATFORM" = ios ] || DM_SCHEME_NAME="$DM_SCHEME_NAME Vision Pro"   # apart from the same game's iPhone scheme in the workspace
 
-else DM_SCHEME_NAME=DmIOS; fi
+else DM_SCHEME_NAME=DmIOS
+  # The unsigned IPA is built from the iOS template in dm/ios itself; a Vision Pro build is a prepared project that Xcode signs and installs
+  [ "$APP_PLATFORM" = ios ] || die "DM_APP_PLATFORM=$APP_PLATFORM needs --prepare-xcode"; fi
 export DM_SCHEME_NAME
 for f in $MODS; do [ -f "$PATCHED/$f.patched.bin" ] && [ -f "$PATCHED/$f.fixups.tsv" ] || die "no rewritten module $PATCHED/$f (run dm/tools/patch_nso.py first)"; done
 python3 "$DM/tools/romfs.py" "$ROMFS" "$MARKER" || die "no RomFS at $ROMFS (missing $MARKER)"
@@ -72,6 +78,7 @@ else [ -n "$V" ] && ls "$MSL_IOS/b-$V" 2> /dev/null | grep -q '_b.metallib$' || 
 t "app: $DM_DISPLAY_NAME $DM_APP_VERSION ($DM_BUNDLE_ID), language $DM_LANG$([ $DM_SHOW_FPS = YES ] && echo ', frame-rate counter on')"
 t "generate Gen/ (host sources, embedded modules, tables)"
 rm -rf Gen && mkdir -p Gen/dm || die "mkdir Gen"
+[ "$APP_PLATFORM" = ios ] || t "platform: $APP_PLATFORM"
 python3 tools/gen_build.py "$DM/host" Gen > Gen/dm.xcconfig || die "gen_build"
 F=$(python3 tools/gen_embed.py "$PATCHED" Gen/embed.S $MODS) || die "gen_embed"
 echo "OTHER_LDFLAGS = \$(inherited) \$(DM_FRAMEWORKS) $F" >> Gen/dm.xcconfig
@@ -113,13 +120,13 @@ mkdir -p Gen/dm/font && cp "${STD_FONT:-/System/Library/Fonts/Supplemental/Arial
 # The catalog is always created (the project always lists it, see project.yml); without an icon it stays empty and DM_APPICON is not set
 ICON=${DM_ICON:-$(dirname "$ROMFS")/icon.jpg}
 mkdir -p Gen/Assets.xcassets && printf '{"info":{"author":"xcode","version":1}}\n' > Gen/Assets.xcassets/Contents.json || die "asset catalog"
-if [ -f "$ICON" ]; then
+if [ -f "$ICON" ] && [ "$APP_PLATFORM" = ios ]; then   # a visionOS icon is a layered image stack, not one PNG: the Vision Pro build has none
   AI=Gen/Assets.xcassets/AppIcon.appiconset; mkdir -p "$AI" || die "mkdir $AI"
   sips -s format png -z 1024 1024 "$ICON" --out "$AI/icon.png" > /dev/null || die "sips: cannot convert the icon $ICON"
   printf '{"images":[{"filename":"icon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}\n' > "$AI/Contents.json"
   echo "DM_APPICON = AppIcon" >> Gen/dm.xcconfig
   t "app icon: $ICON"
-else t "no app icon ($ICON not found): the home-screen icon stays blank"; fi
+else t "no app icon ($([ "$APP_PLATFORM" = ios ] && echo "$ICON not found" || echo "$APP_PLATFORM")): the home-screen icon stays blank"; fi
 # A prepared Xcode project is signed in Xcode, so it asks for the Increased Memory Limit capability the bigger games need (see the README); DM_ENTITLEMENTS=another plist, or empty for none.
 # The unsigned IPA carries the same request in its executable's ad-hoc signature below; the install tool replaces that signature.
 if [ "$PREPARE_XCODE" = YES ] && [ -n "${DM_ENTITLEMENTS-default}" ]; then
@@ -139,7 +146,8 @@ if [ "$PREPARE_XCODE" = YES ]; then
   t "Xcode project: $IOS/DmIOS.xcodeproj"
   t "Xcode derived data: $XCODE_DD"
   t "scheme: $DM_SCHEME_NAME"
-  t "ready: select your Team in Signing & Capabilities, select a physical device, and Run (Release)"
+  if [ "$APP_PLATFORM" = visionos ]; then t "ready: select your Team in Signing & Capabilities, select your Apple Vision Pro, and Run (Release)"
+  else t "ready: select your Team in Signing & Capabilities, select a physical device, and Run (Release)"; fi
   exit 0
 fi
 

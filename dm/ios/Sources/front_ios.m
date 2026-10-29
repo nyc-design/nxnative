@@ -1,6 +1,8 @@
 // iOS front end (the iOS implementation of front.h): a centered 16:9 Metal view (black bars on both sides) + a full-screen virtual gamepad layer (DmGamepad.m, controls drawn over the picture).
 // The host runs on the big-stack thread started by main.m; front_run runs the guest directly on the calling thread.
 #import <UIKit/UIKit.h>
+#import <GameController/GameController.h>
+#include <TargetConditionals.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
 #import <AVFAudio/AVFAudio.h>
@@ -30,7 +32,12 @@ static UILabel *front_ios_fps_label(void);
     if ((self = [super initWithFrame:f])) {
         CAMetalLayer *l = (CAMetalLayer *)self.layer;
         l.device = MTLCreateSystemDefaultDevice(); l.pixelFormat = MTLPixelFormatBGRA8Unorm;
-        l.contentsScale = UIScreen.mainScreen.nativeScale; l.framebufferOnly = NO; l.opaque = YES;
+#if TARGET_OS_VISION
+        l.contentsScale = self.traitCollection.displayScale ?: 2.0;   // updated in layoutSubviews
+#else
+        l.contentsScale = UIScreen.mainScreen.nativeScale;
+#endif
+        l.framebufferOnly = NO; l.opaque = YES;
         self.backgroundColor = UIColor.blackColor;
     }
     return self;
@@ -38,6 +45,9 @@ static UILabel *front_ios_fps_label(void);
 - (void)layoutSubviews {
     [super layoutSubviews];
     CAMetalLayer *l = (CAMetalLayer *)self.layer;
+#if TARGET_OS_VISION
+    l.contentsScale = self.traitCollection.displayScale ?: 2.0;   // known only once the view is in a window, not at init
+#endif
     l.drawableSize = CGSizeMake(self.bounds.size.width * l.contentsScale, self.bounds.size.height * l.contentsScale);
 }
 @end
@@ -72,6 +82,12 @@ static void launcher_done(void) { [g_root startGame]; }
     front_hud_env();   // before the game view makes its device (an env file's DM_METAL_HUD sets it in main.m already)
     self.game = [[DmGameView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:self.game];
+#if TARGET_OS_VISION
+    // Keep physical gamepad events in GameController instead of spatial gestures.
+    GCEventInteraction *gamepadEvents = [GCEventInteraction new];
+    gamepadEvents.handledEventTypes = GCUIEventTypeGamepad;
+    [self.game addInteraction:gamepadEvents];
+#endif
     g_layer = (CAMetalLayer *)self.game.layer;
     if (getenv("DM_METAL_HUD") && atoi(getenv("DM_METAL_HUD"))) { g_layer.developerHUDProperties = @{@"mode": @"default"}; LOG("front end: Metal performance HUD on (DM_METAL_HUD)"); }   // Apple's HUD over the game: frame rate, frame and GPU time, memory
     dm_haptics_apple_init();
@@ -109,7 +125,11 @@ static void launcher_done(void) { [g_root startGame]; }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return UIRectEdgeAll; }   // Edge gestures need two swipes, to avoid accidental exits
 - (BOOL)prefersStatusBarHidden { return YES; }
+#if TARGET_OS_VISION
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskAll; }   // a visionOS window has no orientation to lock and reports portrait
+#else
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
+#endif
 @end
 UIViewController *front_ios_root(void) { return [DmRootVC new]; }
 
@@ -120,8 +140,12 @@ int dm_thermal_now(void) { return (int)NSProcessInfo.processInfo.thermalState; }
 int dm_low_power_now(void) { return NSProcessInfo.processInfo.lowPowerModeEnabled; }   // the frame step does not probe in it (hle_nvn.c fstep_cpu_slowed)
 double dm_brightness_now(void) { return g_brightness; }
 static void front_ios_power_watch(void) {
+#if TARGET_OS_VISION
+    g_brightness = -1;  // no controllable main-screen brightness on visionOS
+#else
     g_brightness = UIScreen.mainScreen.brightness;
     [NSNotificationCenter.defaultCenter addObserverForName:UIScreenBrightnessDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; g_brightness = UIScreen.mainScreen.brightness; }];
+#endif
     [NSNotificationCenter.defaultCenter addObserverForName:NSProcessInfoThermalStateDidChangeNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
         (void)n; LOG("front end: thermal state → %d (%.0f s after launch)", dm_thermal_now(), (now_ns() - g_t0_ns) / 1e9); }];
     [NSNotificationCenter.defaultCenter addObserverForName:NSProcessInfoPowerStateDidChangeNotification object:nil queue:nil usingBlock:^(NSNotification *n) {

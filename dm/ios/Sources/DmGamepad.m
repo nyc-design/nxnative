@@ -14,6 +14,7 @@
 //   Each physical controller is a player of its own (local co-op), as on the Mac: the first one connected is player 1, together with the touch gamepad, the next player 2, and so on up to 8; see "Physical controllers" below.
 //   Shaking the phone shakes the controller (DM_BTN_SHAKE: its six-axis sensor, hle_hid.c), whichever controls are in use; see "Shaking the phone" below.
 #import <UIKit/UIKit.h>
+#include <TargetConditionals.h>
 #import <GameController/GameController.h>
 #import <CoreMotion/CoreMotion.h>
 #import <CoreText/CoreText.h>
@@ -44,6 +45,7 @@ static void publish(void) {   // the touch gamepad and the shake; the host ORs t
 // The accelerometer at 60 Hz (no gyroscope, no permission prompt): gravity is followed by a slow low-pass (about 0.8 s), and a sample whose acceleration beyond it exceeds DM_SHAKE_G
 // (1.5 G by default; Documents/env.txt overrides) is a hit. The controller is shaken until 120 ms after the last hit: a flick is one shake (the host finishes it as a whole cycle)
 // and shaking on keeps it going. Holding the phone and pressing the screen stays far below the threshold. Each detected shake is logged with its peak
+#if !TARGET_OS_VISION
 static CMMotionManager *g_motion;
 static void motion_start(void) {
     if (g_motion) return;
@@ -95,6 +97,11 @@ static void phone_motion_start(void) {
         dm_motion_set_switch(0, as, ws);
     }];
 }
+#else
+// Vision Pro lacks a phone-orientation gyroscope; gamepad motion remains active.
+static void motion_start(void) {}
+static void phone_motion_start(void) {}
+#endif
 
 // ---- Layout constants (in u; x measured from the outer edge, the right half mirrors) ----
 static const CGFloat
@@ -135,7 +142,9 @@ static void pads_start(void);   // Physical controllers, below
     CAShapeLayer *_key[B_N]; CATextLayer *_label[B_N];   // one layer per key
     CAShapeLayer *_ring, *_knob;                   // the left stick (the right one is not drawn)
     CAShapeLayer *_swap; CATextLayer *_swapLabel; BOOL _swapHeld;
-    UIImpactFeedbackGenerator *_touchFeedback;       // one short feedback per touch-control press edge
+#if !TARGET_OS_VISION
+    UIImpactFeedbackGenerator *_touchFeedback;       // one short feedback per touch-control press edge (visionOS has no feedback generators)
+#endif
     unsigned _hapticSticks;
     BOOL _stickShown;                              // the left stick was held at the last refresh
     BOOL _full, _tap;                              // the 3D layout / the Tap layout is current
@@ -153,7 +162,12 @@ static CAShapeLayer *shape(CALayer *parent) {
 }
 static CATextLayer *label(CALayer *parent, NSString *s) {
     CATextLayer *t = [CATextLayer layer];
-    t.string = s; t.alignmentMode = kCAAlignmentCenter; t.foregroundColor = k_text.CGColor; t.contentsScale = UIScreen.mainScreen.scale;
+    t.string = s; t.alignmentMode = kCAAlignmentCenter; t.foregroundColor = k_text.CGColor;
+#if TARGET_OS_VISION
+    t.contentsScale = UITraitCollection.currentTraitCollection.displayScale ?: 2.0;   // no UIScreen on visionOS
+#else
+    t.contentsScale = UIScreen.mainScreen.scale;
+#endif
     [parent addSublayer:t]; return t;
 }
 static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   // keys shown only in the 3D layout
@@ -161,11 +175,13 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
 - (instancetype)initWithFrame:(CGRect)f {
     if ((self = [super initWithFrame:f])) {
         self.multipleTouchEnabled = YES; self.opaque = NO; self.backgroundColor = UIColor.clearColor;
+#if !TARGET_OS_VISION
         const char *feedback = getenv("DM_TOUCH_HAPTICS");
         if (!feedback || atoi(feedback)) {
             _touchFeedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
             [_touchFeedback prepare];
         }
+#endif
         _owner = [NSMapTable strongToStrongObjectsMapTable]; _faceOf = [NSMapTable strongToStrongObjectsMapTable];
         static dispatch_once_t once;
         dispatch_once(&once, ^{
@@ -293,9 +309,13 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     BOOL changed = face != _faceBits || dpad != _dpadBits || btn != _btnBits || swap != _swapHeld;
     uint64_t pressed = (face | dpad | btn) & ~(_faceBits | _dpadBits | _btnBits);
     unsigned gripping = (_stick[0] ? 1u : 0) | (_stick[1] ? 2u : 0);
+#if !TARGET_OS_VISION
     if (pressed || (swap && !_swapHeld) || (gripping & ~_hapticSticks)) {
         [_touchFeedback impactOccurredWithIntensity:0.6]; [_touchFeedback prepare];
     }
+#else
+    (void)pressed;
+#endif
     _hapticSticks = gripping;
     _faceBits = face; _dpadBits = dpad; _btnBits = btn; _swapHeld = swap;
     pthread_mutex_lock(&g_mu);
@@ -407,7 +427,9 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
 
 - (void)layoutSubviews {
     [super layoutSubviews];
+#if !TARGET_OS_VISION
     UIWindowScene *ws = self.window.windowScene; if (ws) atomic_store(&g_iface_orient, (int)ws.effectiveGeometry.interfaceOrientation);
+#endif
     CGFloat u = self.u;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     _controls.frame = self.layer.bounds;

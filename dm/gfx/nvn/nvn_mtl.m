@@ -10381,6 +10381,8 @@ int mtl_display_hz(void) {
     CGDisplayModeRef m = CGDisplayCopyDisplayMode(CGMainDisplayID());
     double hz = m ? CGDisplayModeGetRefreshRate(m) : 0; if (m) CGDisplayModeRelease(m);
     return (int)(hz + 0.5);
+#elif TARGET_OS_VISION
+    return 90;   // Apple Vision Pro's standard rate; visionOS has no UIScreen (the windowed app has no screen of its own)
 #else
     Class c = NSClassFromString(@"UIScreen"); id s = c ? [c valueForKey:@"mainScreen"] : nil;
     return s ? [[s valueForKey:@"maximumFramesPerSecond"] intValue] : 0;

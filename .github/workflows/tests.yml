@@ -179,6 +179,10 @@ jobs:
           make GAME="$GAME" -j3 $tests 2>&1 | tee ../../../logs/gfx-tests-build.log
       - name: iOS host sources compiled for the iPhone SDK (no signing, no Xcode project)
         run: python3 dm/ios/tools/compile_check.py 2>&1 | tee logs/ios-compile.log
+      - name: The same sources compiled for the visionOS SDK (Apple Vision Pro, experimental)
+        run: |
+          xcrun --sdk xros --show-sdk-version
+          DM_APP_PLATFORM=visionos python3 dm/ios/tools/compile_check.py 2>&1 | tee logs/visionos-compile.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -204,5 +208,37 @@ jobs:
         if: failure()
         with:
           name: logs-ios-build
+          path: logs
+          retention-days: 7
+
+  # docs/visionos-experimental.md: the same project with the device platform switched (dm/ios/tools/apple_platform.py)
+  visionos-build:
+    name: Unsigned Apple Vision Pro app (synthetic modules, Swift and link)
+    runs-on: xcode-27
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen
+        run: command -v xcodegen || brew install xcodegen
+      - name: Build the visionOS project with synthetic inputs
+        env:
+          DM_APP_PLATFORM: visionos
+        run: |
+          mkdir -p logs
+          xcrun --sdk xros --show-sdk-version
+          python3 dm/ios/tools/build_smoke.py --output "$RUNNER_TEMP/visionos-smoke" 2>&1 | tee logs/visionos-build.log
+      - name: The shader chain's Metal flags (ios_metal.py) for the visionOS SDK
+        env:
+          DM_APP_PLATFORM: visionos
+        run: |
+          printf '#include <metal_stdlib>\nusing namespace metal;\nkernel void k(device float *o [[buffer(0)]], uint i [[thread_position_in_grid]]) { o[i] = isnan(o[i]) ? 0 : o[i]; }\n' > "$RUNNER_TEMP/k.metal"
+          python3 -c 'import sys; sys.path.insert(0, "dm/ios/tools"); import ios_metal; assert ios_metal.SDK == "xros"; t = sys.argv[1]; ios_metal.compile(t + "/k.metal", t + "/k.air", t + "/k.metallib")' "$RUNNER_TEMP"
+          test -s "$RUNNER_TEMP/k.metallib"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: logs-visionos-build
           path: logs
           retention-days: 7

@@ -179,7 +179,7 @@ def main():
         dirs = [(os.path.join(out, 'vk'), 'macosx', [])]
         # The iPhone library is compiled with -fmetal-math-mode=relaxed, as the NVN chain's (dm/ios/tools/ios_metal.py): the default fast mode lets the GPU compiler assume there is
         # no NaN / Inf, which would let it drop the NaN handling of the precise:: functions above
-        if ios: dirs.append((os.path.join(ios, 'vk'), 'iphoneos', ['-mios-version-min=18.0', '-fmetal-math-mode=relaxed']))
+        if ios: dirs.append((os.path.join(ios, 'vk'), 'xros' if os.environ.get('DM_APP_PLATFORM') == 'visionos' else 'iphoneos', (['-fmetal-math-mode=relaxed'] if os.environ.get('DM_APP_PLATFORM') == 'visionos' else ['-mios-version-min=18.0', '-fmetal-math-mode=relaxed'])))
         for d, sdk, extra in dirs:
             lib = metallib(msls, d, sdk, extra)
             open(os.path.join(d, 'vk_shaders.tsv'), 'w').write('\n'.join(tsv) + '\n')
