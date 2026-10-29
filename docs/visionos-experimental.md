@@ -29,6 +29,8 @@ which xcodegen
 
 ## Build and install
 
+In one command, with Xcode signed in to your Apple ID and the headset paired and awake: `python3 scripts/deploy.py ~/Games/Odyssey -k ~/keys/prod.keys --device vision --bundle-prefix com.<you>.nxnative` prepares, builds, signs, installs, copies the game files and launches the game ([deploy.py](development.md#one-command-deploypy)). The headset has no cable but the Developer Strap, so the game files go over Wi-Fi; on a slow network add `--no-push-romfs` and AirDrop the image instead. By hand:
+
 1. Prepare the project (the first run takes 30–60 minutes and needs about twice the game's size plus 10 GB free on the game's drive):
 
    ```

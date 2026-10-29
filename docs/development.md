@@ -380,6 +380,22 @@ The first Xcode build copies the complete game, so allow free space on the game'
 
 Each prepared game is a scheme in the shared workspace (by default `NxNative.xcworkspace` beside the NSP folder; `--xcode-workspace`, `XCODE_WORKSPACE` in Spyder, collects games from different folders in one). Give each game its own bundle ID (`--bundle-id`) to keep them installed together; keep it when updating an installed game, as another ID is a separate app with separate saves. The script rejects a bundle ID that another project in the workspace uses. Preparing a game again regenerates only its project and keeps its Release bundle ID and team, including changes made in Xcode; `--bundle-id` / `--team-id` (`BUNDLE_ID` / `TEAM_ID` in Spyder, or `DM_TEAM_ID`) override them. Other manual project edits are replaced; edit `dm/ios/project.yml` for shared changes. Prepare a game again after changing its game files, profile, shaders or the project template; switching games needs only the scheme menu.
 
+### One command: deploy.py
+
+`scripts/deploy.py` does all of the above from a terminal, for the paired device you name: it prepares the project with `--romfs separate` (`--platform visionos` for an Apple Vision Pro), builds it with `xcodebuild -allowProvisioningUpdates` (Xcode-managed signing), installs it with `devicectl`, copies the RomFS image when the device has no file of its size, launches the game and copies its `Documents/log.txt` to `<title ID>_build/logs/device_<platform>_log.txt`.
+
+```
+python3 scripts/deploy.py "<NSP folder>" -k "<prod.keys>" --device iphone --team-id <team ID> --bundle-prefix com.<you>.nxnative
+python3 scripts/deploy.py "<NSP folder>" --device vision
+```
+
+- Xcode must be signed in to your Apple ID (Xcode → Settings → Accounts), and the device paired with this Mac, with Developer Mode on and unlocked. A connection lost during the install or the copy is retried twice.
+- `-k`, `--team-id` and `--bundle-prefix` are kept in `~/.config/nxnative/deploy.json`, so later runs need only the folder and the device. Without a team ID, the team of the keychain's only Apple Development certificate is used.
+- `--bundle-prefix` (`--bundle-prefix` / `BUNDLE_PREFIX` of `build_ipa_from_nsp.py`) names new games' apps `<prefix>.<title ID>`, with `.visionos` for Apple Vision Pro. It must be a prefix your team can register: `org.nxnative.*` IDs are taken. A game prepared before keeps its saved bundle ID.
+- The game files go over the device connection, which on a slow network takes long (5 GB at 1.5 MB/s: about an hour). `--no-push-romfs` installs only and says how to copy the image by hand instead: AirDrop it to the device, then in its Files app move it into the game's folder as `romfs.img`. The next run finds it and launches. A file of the right size counts as copied; the app checks the image's identity at start, and when its log says the image is unusable, the script copies it again and restarts the game. `--push-romfs` always copies.
+- `--device` takes `iphone`, `ipad`, `vision`, or a device name or UDID; with one paired device it can be left out. `--device mac` builds the [Mac app](#a-mac-app) instead (`--platform mac-app`, `<game name>.app` in the NSP folder), quits a running copy, opens it and reads this run's lines of `~/Library/Logs/nxnative/<title ID>.log`. `--log-secs` sets how long the game runs before its log is fetched (60 by default, 0 for none), `--no-launch` stops after the install. Other options go to `build_ipa_from_nsp.py` (`--language ja`, `--gpu g18p`).
+- `build_ipa_from_nsp.py --progress json` ends a prepared project with one `result` event (project, derived data, bundle ID, team, RomFS image), which `deploy.py` reads.
+
 ### Quick reinstalls
 
 A full install sends the whole app, about 11 GB for Animal Crossing: New Horizons (3 to 4 minutes). The game files can stay on the phone instead:
