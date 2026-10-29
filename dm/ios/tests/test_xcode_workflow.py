@@ -32,7 +32,12 @@ class XcodePipelineTests(unittest.TestCase):
     def test_vision_pro_project_sits_beside_the_iphone_one(self):
         self.prepare_fixture('nvn', False, visionos=True)
 
-    def prepare_fixture(self, graphics, derived, visionos=False):
+    def test_bundle_prefix_names_a_new_games_app(self):
+        for visionos in (False, True):
+            with self.subTest(visionos=visionos):
+                self.prepare_fixture('nvn', False, visionos=visionos, prefix='com.example.nx')
+
+    def prepare_fixture(self, graphics, derived, visionos=False, prefix=None):
         with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
             root = Path(temporary).resolve()
             (root / 'prod.keys').touch()
@@ -69,7 +74,7 @@ class XcodePipelineTests(unittest.TestCase):
             stack.enter_context(patch.object(nacp, 'name', return_value='Fixture Game'))
             stack.enter_context(patch.object(nacp, 'version', return_value='1.0.0'))
             stack.enter_context(patch.object(nacp, 'languages', return_value=['en-US', 'ja']))
-            stack.enter_context(patch.object(xcode_projects, 'signing_settings', return_value={
+            stack.enter_context(patch.object(xcode_projects, 'signing_settings', return_value={} if prefix else {
                 'PRODUCT_BUNDLE_IDENTIFIER': 'com.example.saved', 'DEVELOPMENT_TEAM': 'ABCDEFGHIJ'}))
             register = stack.enter_context(patch.object(xcode_projects, 'register_project'))
             progress = build.Progress()
@@ -79,7 +84,8 @@ class XcodePipelineTests(unittest.TestCase):
                 with redirect_stdout(output):
                     code = build.cli([str(root), '-k', str(root / 'prod.keys'), '--prepare-xcode',
                                       '--language', 'ja', '--no-show-fps', '--no-motion', '--progress', 'json']
-                                     + (['--platform', 'visionos'] if visionos else []))
+                                     + (['--platform', 'visionos'] if visionos else [])
+                                     + (['--bundle-prefix', prefix + '.', '--team-id', 'ABCDEFGHIJ'] if prefix else []))
             finally:
                 progress.close()
             self.assertEqual(code, 0)
@@ -94,9 +100,16 @@ class XcodePipelineTests(unittest.TestCase):
             self.assertIn('DM_ENV_FILE', environment)   # --no-motion bakes DM_MOTION=0 into the app's dm/env.txt
             self.assertEqual(Path(environment['DM_ENV_FILE']).read_text(), 'DM_MOTION=0\n')
             self.assertEqual(environment['GFXAPI'], graphics)
-            self.assertEqual(environment['DM_BUNDLE_ID'], 'com.example.saved')
+            bundle = f'{prefix}.{registered.id.lower()}' + ('.visionos' if visionos else '') if prefix else 'com.example.saved'
+            self.assertEqual(environment['DM_BUNDLE_ID'], bundle)
             self.assertEqual(environment['DM_TEAM_ID'], 'ABCDEFGHIJ')
             suffix = '-visionos' if visionos else ''
+            results = [event for event in events if event.get('ev') == 'result']   # what scripts/deploy.py builds and installs
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]['bundle_id'], bundle); self.assertEqual(results[0]['team_id'], 'ABCDEFGHIJ')
+            self.assertEqual(results[0]['platform'], 'visionos' if visionos else 'ios'); self.assertEqual(results[0]['app_name'], 'Fixture Game')
+            self.assertEqual(Path(results[0]['project']), root / f'{registered.id}_build/xcode{suffix}/DmIOS.xcodeproj')
+            self.assertIsNone(results[0]['romfs'])   # bundled game files: nothing to copy
             self.assertEqual(Path(environment['DM_XCODE_PROJECT_DIR']), root / f'{registered.id}_build/xcode{suffix}')
             self.assertEqual(Path(environment['DM_XCODE_DERIVED_DATA']), root / f'{registered.id}_build/xcode-derived-data{suffix}')
             self.assertEqual(environment.get('DM_APP_PLATFORM'), 'visionos' if visionos else None)

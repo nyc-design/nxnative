@@ -117,6 +117,7 @@ def prepare(nsp_dir, dev, keys, team, prefix, extra):
     cmd += extra
     result = None
     p = subprocess.Popen([str(c) for c in cmd], stdout=subprocess.PIPE, text=True)
+    assert p.stdout is not None
     for line in p.stdout:
         try: ev = json.loads(line)
         except ValueError: say(line.rstrip()); continue
