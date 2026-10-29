@@ -125,7 +125,11 @@ static void launcher_done(void) { [g_root startGame]; }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return UIRectEdgeAll; }   // Edge gestures need two swipes, to avoid accidental exits
 - (BOOL)prefersStatusBarHidden { return YES; }
+#if TARGET_OS_VISION
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskAll; }   // a visionOS window has no orientation to lock and reports portrait
+#else
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
+#endif
 @end
 UIViewController *front_ios_root(void) { return [DmRootVC new]; }
 

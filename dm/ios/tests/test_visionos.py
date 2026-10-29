@@ -32,6 +32,8 @@ class ApplePlatformTests(unittest.TestCase):
         self.assertIn('    platform: visionOS\n', text)
         self.assertIn('TARGETED_DEVICE_FAMILY: "7"', text)
         self.assertIn('-mcpu=apple-a15', text)
+        self.assertIn('          - UIInterfaceOrientationPortrait\n', text)   # the orientation a visionOS window reports (launcher crash at start)
+        self.assertNotIn('UIInterfaceOrientationPortrait', self.template)
         for gone in ('    iOS: "26.0"', '    platform: iOS\n', 'UIRequiresFullScreen', '-mcpu=apple-a18', '"1,2"'):
             self.assertNotIn(gone, text)
         self.assertEqual((apple_platform.sdk(env), apple_platform.destination(env), apple_platform.products(env)),

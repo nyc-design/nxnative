@@ -23,6 +23,9 @@ VISIONOS_PROJECT = (
     ('TARGETED_DEVICE_FAMILY: "1,2"', 'TARGETED_DEVICE_FAMILY: "7"'),   # 7 = Apple Vision
     ('OTHER_CFLAGS: $(inherited) -mcpu=apple-a18', 'OTHER_CFLAGS: $(inherited) -mcpu=apple-a15'),
     ('        UIRequiresFullScreen: true\n', ''),   # iOS-only multitasking key
+    # A visionOS window reports portrait. With only the landscape orientations listed, presenting the launcher's UIHostingController threw
+    # UIApplicationInvalidInterfaceOrientation ("no common orientation with the application") at start on Apple Vision Pro
+    ('          - UIInterfaceOrientationLandscapeLeft\n', '          - UIInterfaceOrientationLandscapeLeft\n          - UIInterfaceOrientationPortrait\n'),
 )
 
 # Frameworks the host's Mac link line names that visionOS does not have; the code that uses them is Mac-only (!TARGET_OS_IPHONE)
