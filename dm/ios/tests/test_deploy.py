@@ -73,7 +73,7 @@ class Build(unittest.TestCase):
 
         out = io.StringIO()
         with patch.object(deploy.subprocess, 'Popen', return_value=Proc()) as popen, patch('sys.stdout', out):
-            res = deploy.prepare(Path('/games/Game'), {'platform': 'visionos'}, '/k/prod.keys', 'ABCDEFGHIJ', 'com.example', ['--language', 'ja'])
+            res = deploy.prepare(Path('/games/Game'), 'visionos', '/k/prod.keys', 'ABCDEFGHIJ', 'com.example', ['--language', 'ja'])
         self.assertEqual(res['bundle_id'], 'com.example.game.visionos')
         cmd = popen.call_args.args[0]
         for want in (['--romfs', 'separate'], ['--progress', 'json'], ['--platform', 'visionos'], ['-k', '/k/prod.keys'], ['--team-id', 'ABCDEFGHIJ'],
@@ -83,6 +83,17 @@ class Build(unittest.TestCase):
         text = out.getvalue()
         self.assertIn('app name: Game', text)
         self.assertNotIn('push_romfs.sh', text); self.assertNotIn('choose the game scheme', text); self.assertNotIn('not in this build', text)
+
+    def test_mac_builds_the_mac_app(self):
+        class Proc:
+            stdout = io.StringIO(json.dumps({'ev': 'result', 'kind': 'mac-app', 'app': '/games/Game/Game.app', 'log': '/logs/0100.log'}) + '\n'); returncode = 0
+            def wait(self): return 0
+
+        with patch.object(deploy.subprocess, 'Popen', return_value=Proc()) as popen, patch('sys.stdout', io.StringIO()):
+            res = deploy.prepare(Path('/games/Game'), 'mac', None, 'ABCDEFGHIJ', None, [])
+        cmd = popen.call_args.args[0]
+        self.assertEqual(res['kind'], 'mac-app')
+        self.assertIn('mac-app', cmd); self.assertNotIn('--romfs', cmd); self.assertNotIn('--team-id', cmd)   # the Mac app carries its game files and is signed ad-hoc
 
     def test_signing_failures_say_what_to_do(self):
         log = ('/x/DmIOS.xcodeproj: error: Failed Registering Bundle Identifier: The app identifier "org.nxnative.0100000000010000" cannot be registered to your development team '

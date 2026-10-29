@@ -2384,6 +2384,8 @@ def main(args=None):
         mac_app(py, repo, out_ipa, app, work, game, patched, host, font, ios, aoc, gfx, lang, g, app_name, app_version, bundle_id, icon, args.mac_sign or MAC_SIGN, env, logs, env_file,
                 (args.gpu or PSO_GPUS).strip())
         rmtree(work / 'tmp')
+        PROG.result({'kind': 'mac-app', 'platform': 'mac', 'app': str(out_ipa), 'app_name': app_name, 'bundle_id': bundle_id, 'title_id': f'{app:016X}', 'work': str(work),
+                     'log': str(Path.home() / 'Library/Logs/nxnative' / f'{app:016X}.log')})   # for scripts/deploy.py --device mac (the path dm/mac/launcher.c writes)
         say(f'done: {out_ipa} ({tree_size(out_ipa)[1] / 2**30:.1f} GB); '
             f'open it from Finder. Its save is in ~/Library/Application Support/nxnative/{app:016X}/, its log in ~/Library/Logs/nxnative/{app:016X}.log')
         report_profile_status(g, reg, pkg_ver, derived, provisional, 'Mac app', patched)

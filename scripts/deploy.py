@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-# One command from a game's NSP folder to the game running on your own iPhone, iPad or Apple Vision Pro, signed with your Apple developer account:
+# One command from a game's NSP folder to the game running on your own iPhone, iPad or Apple Vision Pro, signed with your Apple developer account, or on this Mac (--device mac):
 #   build_ipa_from_nsp.py --romfs separate (the game's Xcode project; --platform visionos for Apple Vision Pro, picked from the device) → xcodebuild (signed with an
 #   Xcode-managed profile) → devicectl install → the game files (the RomFS image) copied once per game version and device → launch → the app's Documents/log.txt back to the Mac.
-# Usage: python3 scripts/deploy.py <NSP folder> [-k <prod.keys>] [--device iphone | ipad | vision | <device name or UDID>] [--team-id <team>] [--bundle-prefix com.<you>.nxnative]
+#   --device mac: build_ipa_from_nsp.py --platform mac-app (<game name>.app in the NSP folder), opened, its ~/Library/Logs/nxnative/<title ID>.log read.
+# Usage: python3 scripts/deploy.py <NSP folder> [-k <prod.keys>] [--device iphone | ipad | vision | mac | <device name or UDID>] [--team-id <team>] [--bundle-prefix com.<you>.nxnative]
 #   Any other option goes to build_ipa_from_nsp.py (--language ja, --gpu g18p, ...). Exit code 0 when the game was installed (and launched), 1 on error, 130 when interrupted.
 # Needs: what build_ipa_from_nsp.py needs; Xcode signed in to your Apple ID (Xcode → Settings → Accounts); the device paired with this Mac (once, in Xcode → Devices), with
 #   Developer Mode on, unlocked, by cable or on the same network. A paid account's apps last a year; a free account's, 7 days.
@@ -105,15 +106,15 @@ def save_config(cfg):
 
 # ---- build ----
 
-SKIP_SAY = ('the game files are not in this build', 'scripts/push_romfs.sh', 'choose the game scheme')   # the build's directions for the steps deploy does itself
+SKIP_SAY = ('the game files are not in this build', 'scripts/push_romfs.sh', 'choose the game scheme', 'open it from Finder')   # the build's directions for the steps deploy does itself
+PLATFORM_ARGS = {'ios': ['--prepare-xcode', '--romfs', 'separate'], 'visionos': ['--platform', 'visionos', '--romfs', 'separate'], 'mac': ['--platform', 'mac-app']}
 
 
-def prepare(nsp_dir, dev, keys, team, prefix, extra):
-    """build_ipa_from_nsp.py for the device's platform, with the game files kept out of the app; returns its result event (project, bundle ID, RomFS image, ...)"""
-    cmd = [sys.executable, REPO / 'scripts/build_ipa_from_nsp.py', nsp_dir, '--romfs', 'separate', '--progress', 'json']
-    cmd += ['--platform', 'visionos'] if dev['platform'] == 'visionos' else ['--prepare-xcode']
+def prepare(nsp_dir, platform, keys, team, prefix, extra):
+    """build_ipa_from_nsp.py for the platform (ios, visionos: an Xcode project with the game files kept out of the app; mac: the Mac app); returns its result event"""
+    cmd = [sys.executable, REPO / 'scripts/build_ipa_from_nsp.py', nsp_dir, '--progress', 'json'] + PLATFORM_ARGS[platform]
     if keys: cmd += ['-k', keys]
-    if team: cmd += ['--team-id', team]
+    if team and platform != 'mac': cmd += ['--team-id', team]
     if prefix: cmd += ['--bundle-prefix', prefix]
     cmd += extra
     result = None
@@ -128,8 +129,30 @@ def prepare(nsp_dir, dev, keys, team, prefix, extra):
         elif kind == 'stage': say(f'  [{ev["k"]}/{ev["n"]}] {ev["name"]} …')
         elif kind == 'stage_end': say(f'  {"✓" if ev["ok"] else "✗"} {ev["name"]} ({ev["elapsed"]:.0f} s)' + (f': {ev["summary"]}' if ev.get('summary') else ''))
     if p.wait(): raise DeployError(f'build_ipa_from_nsp.py failed ({p.returncode}); see the lines above')
-    if not result: raise DeployError('build_ipa_from_nsp.py reported no Xcode project')
+    if not result: raise DeployError('build_ipa_from_nsp.py reported no result (no Xcode project or Mac app)')
     return result
+
+
+def deploy_mac(args, nsp_dir, cfg, extra):
+    """--device mac: the double-clickable Mac app (build_ipa_from_nsp.py --platform mac-app, signed ad-hoc unless --mac-sign), opened, and its log read"""
+    say('device: this Mac (the Mac app)')
+    res = prepare(nsp_dir, 'mac', cfg.get('keys'), None, cfg.get('bundle_prefix'), extra)
+    app, log = Path(res['app']), Path(res['log'])
+    if args.no_launch: say(f'done: {app}'); return
+    run(['pkill', '-f', str(app / 'Contents/MacOS')], check=False)   # a running copy would keep the old build
+    start = log.stat().st_size if log.exists() else 0
+    say(f'opening {app.name} …')
+    run(['open', app])
+    if args.log_secs <= 0: say('done: running'); return
+    say(f'letting it run {args.log_secs} s, then reading its log …')
+    time.sleep(args.log_secs)
+    data = log.read_bytes() if log.exists() else b''
+    text = (data[start:] if len(data) >= start else data).decode(errors='replace')   # this run's lines (a log started afresh is read whole)
+    if not text: say(f'[RED] nothing in {log} yet'); return
+    summarize_log(text, log)
+    crash = crashed(text)
+    if crash: raise DeployError(f'the app crashed ({log}):\n  ' + '\n  '.join(crash))
+    say('done: the game is running')
 
 
 def scheme_of(project):
@@ -245,7 +268,7 @@ def parse_args(argv):
                                  epilog='example: python3 scripts/deploy.py ~/Games/Odyssey -k ~/keys/prod.keys --device vision --bundle-prefix com.example.nxnative')
     ap.add_argument('nsp_dir', help='folder holding one game\'s NSPs')
     ap.add_argument('-k', '--keys', help='prod.keys (kept for later runs)')
-    ap.add_argument('--device', help='iphone, ipad, vision, or a device name or UDID (default: the only paired device)')
+    ap.add_argument('--device', help='iphone, ipad, vision, a device name or UDID (default: the only paired device), or mac: the Mac app of the game, opened on this Mac')
     ap.add_argument('--team-id', help='Apple developer team ID (kept; default: the saved one, else the team of the only Apple Development certificate)')
     ap.add_argument('--bundle-prefix', help='start of new games\' bundle IDs, e.g. com.<you>.nxnative (kept)')
     ap.add_argument('--push-romfs', action='store_true', help='copy the game files even when the device has them')
@@ -267,11 +290,12 @@ def main(argv):
     team = cfg.get('team_id') or detect_team()
     if team and not cfg.get('team_id'): say(f'team: {team} (from the Apple Development certificate)')
     if any(getattr(args, k) for k in ('keys', 'team_id', 'bundle_prefix')): save_config(cfg)
+    if (args.device or '').lower() == 'mac': return deploy_mac(args, nsp_dir, cfg, extra)
 
     dev = pick_device(physical(devicectl_json('list', 'devices')['devices']), args.device)
     say(f'device: {dev["name"]} ({dev["udid"]}, {"Apple Vision Pro" if dev["platform"] == "visionos" else dev["type"] or "iOS"})')
     say('preparing the Xcode project (build_ipa_from_nsp.py) …')
-    res = prepare(nsp_dir, dev, cfg.get('keys'), team, cfg.get('bundle_prefix'), extra)
+    res = prepare(nsp_dir, dev['platform'], cfg.get('keys'), team, cfg.get('bundle_prefix'), extra)
     work, bundle, platform = Path(res['work']), res['bundle_id'], res['platform']
     if args.push_romfs and args.no_push_romfs: raise DeployError('--push-romfs and --no-push-romfs contradict each other')
     if res.get('team_id', '0000000000') == '0000000000': raise DeployError('no team ID: give --team-id (Xcode → Settings → Accounts shows it)')
