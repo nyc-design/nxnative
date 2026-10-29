@@ -2429,7 +2429,7 @@ def main(args=None):
         say(f'game project: {project}')
         say(f'Xcode derived data: {xcode_dd}')
         # for a program driving the build (scripts/deploy.py): what it builds, installs and copies next
-        PROG.result({'kind': 'xcode', 'platform': 'visionos' if visionos else 'ios', 'project': str(project), 'derived_data': str(xcode_dd), 'bundle_id': bundle_id,
+        PROG.result({'kind': 'xcode', 'platform': 'visionos' if visionos else 'ios', 'project': str(project), 'derived_data': str(xcode_dd), 'bundle_id': bundle_id, 'app_name': app_name,
                      'team_id': team_id, 'title_id': f'{app:016X}', 'work': str(work), 'romfs': str(rfs.source(game)) if separate and os.path.isfile(rfs.source(game)) else None})
         if separate: say_push_romfs(rfs.source(game), bundle_id)
         say('choose the game scheme in Xcode, select your Team and your Apple Vision Pro, then Run (Release)' if visionos else

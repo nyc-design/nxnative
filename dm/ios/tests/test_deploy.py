@@ -46,13 +46,10 @@ class Devices(unittest.TestCase):
 
 
 class GameFiles(unittest.TestCase):
-    def test_copy_unless_this_image_is_already_there(self):
-        state = {'UDID app': 'DMROMFSID1 size=5 index=ab'}
-        self.assertFalse(deploy.need_push(state, 'UDID app', 'DMROMFSID1 size=5 index=ab', 5, 5))
-        self.assertTrue(deploy.need_push(state, 'UDID app', 'DMROMFSID1 size=5 index=cd', 5, 5))   # another version from here
-        self.assertTrue(deploy.need_push(state, 'UDID app', 'DMROMFSID1 size=5 index=ab', 5, 3))   # the device's copy was cut short
-        self.assertTrue(deploy.need_push(state, 'UDID app', 'DMROMFSID1 size=5 index=ab', 5, None))   # reinstalled: no copy at all
-        self.assertTrue(deploy.need_push({}, 'UDID app', 'DMROMFSID1 size=5 index=ab', 5, 5))   # a copy this Mac did not make
+    def test_copy_unless_a_file_of_the_images_size_is_there(self):
+        self.assertFalse(deploy.need_push(5, 5))   # copied before, or put there by hand (AirDrop): the app checks its identity
+        self.assertTrue(deploy.need_push(5, 3))   # a copy cut short
+        self.assertTrue(deploy.need_push(5, None))   # reinstalled: no copy at all
 
 
 class Build(unittest.TestCase):
