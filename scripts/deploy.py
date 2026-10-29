@@ -224,6 +224,13 @@ def fetch_log(dev, bundle, dest):
     return Path(dest).read_text(errors='replace') if not code and Path(dest).exists() else None
 
 
+CRASH_MARKERS = ('*** Terminating app', '[dm] CRASH', 'libc++abi: terminating')   # an uncaught exception (UIKit, Swift) and the host's own signal handler
+
+
+def crashed(text):   # the log's crash lines, empty when it shows none
+    return [l[:300] for l in text.splitlines() if l.startswith(CRASH_MARKERS)]
+
+
 def summarize_log(text, dest):
     lines = text.splitlines(); red = [l for l in lines if l.startswith('[RED] ')]
     say(f'device log: {dest} ({len(lines):,} lines, {len(red)} [RED])')
@@ -316,6 +323,8 @@ def main(argv):
     if text is None: say('[RED] could not fetch Documents/log.txt'); return
     summarize_log(text, dest)
     if UNUSABLE in text: raise DeployError('the app still finds its game files unusable; run again with --push-romfs')
+    crash = crashed(text)
+    if crash: raise DeployError(f'the app crashed ({dest}):\n  ' + '\n  '.join(crash))
     say('done: the game is running')
 
 

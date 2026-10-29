@@ -46,6 +46,11 @@ class Devices(unittest.TestCase):
 
 
 class GameFiles(unittest.TestCase):
+    def test_a_crash_in_the_log_is_reported(self):   # the headset's first start: the launcher threw before the game ran, and deploy had said it was running
+        log = ('launcher: 13 settings shown\n*** Terminating app due to uncaught exception \'UIApplicationInvalidInterfaceOrientation\', reason: \'...\'\n'
+               'libc++abi: terminating due to uncaught exception of type NSException\n[dm] CRASH sig=6 addr=__pthread_kill+0x8\n')
+        self.assertEqual(len(deploy.crashed(log)), 3)
+        self.assertEqual(deploy.crashed('boot: game language en-US\n[dm] front end: thermal state 0\n'), [])
     def test_copy_unless_a_file_of_the_images_size_is_there(self):
         self.assertFalse(deploy.need_push(5, 5))   # copied before, or put there by hand (AirDrop): the app checks its identity
         self.assertTrue(deploy.need_push(5, 3))   # a copy cut short
