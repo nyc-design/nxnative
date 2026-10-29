@@ -41,7 +41,8 @@ PROD_KEYS = ''                          # path of prod.keys (empty = ask at run 
 PACKAGE = ''                            # version packed into the IPA (empty = the newest in the folder; Mario 'v327680' i.e. 1.2.1, or 'v0')
 OUT_IPA = ''                            # output IPA (empty = <the profile's ipa> in the NSP folder); with PLATFORM 'mac-app' the output app (empty = <game name>.app in the NSP folder)
 APP_NAME = ''                           # app name on the home screen (empty = the game name in the base NSP)
-BUNDLE_ID = ''                          # the app's bundle ID (empty = saved per-game Xcode ID, else org.nxnative.<base game title ID in lowercase>)
+BUNDLE_ID = ''                          # the app's bundle ID (empty = saved per-game Xcode ID, else <BUNDLE_PREFIX>.<base game title ID in lowercase>)
+BUNDLE_PREFIX = ''                      # the start of a new game's bundle ID (empty = org.nxnative); set it to one your team owns (com.<you>.nxnative): Xcode cannot register an ID another team took
 ROMFS = 'bundle'                        # 'bundle' = the game files go into the IPA (or the Xcode app), as always; 'separate' = they stay out (DM_COPY_ROMFS=NO): the IPA is small, and its rebuilds do not pack or send the RomFS again.
                                         #   Copy it to the phone once per game version with the scripts/push_romfs.sh command printed at the end (the app checks that the image is the one it was built for)
 PREPARE_XCODE = False                   # prepare a per-game Xcode project and add it to the workspace instead of packing an IPA; requires KEEP_EXTRACTED
@@ -199,6 +200,10 @@ class Progress:
         with self.lock:
             if self.mode == 'json': self._json({'ev': 'say', 'msg': msg})
             else: self._out(msg)
+
+    def result(self, obj):   # a build's outcome as one JSON event (json mode only: the console lines already say it)
+        with self.lock:
+            if self.mode == 'json': self._json(dict(obj, ev='result'))
 
     def close(self, ok=True):   # end the current stage and stop the ticker (the mode stays: a message after it is still JSON in json mode)
         with self.lock:
@@ -2056,7 +2061,8 @@ def parse_args(argv):
     ap.add_argument('-p', '--package', help='version packed into the IPA, e.g. v327680 / v0 (default: the newest in the folder)')
     ap.add_argument('-o', '--out', help='output IPA, or app with --platform mac-app (default: <the profile\'s ipa>, or <game name>.app, in the NSP folder)')
     ap.add_argument('--app-name', help='app name on the home screen (default: the game name in the base NSP)')
-    ap.add_argument('--bundle-id', help='the app\'s bundle ID (default: saved Xcode ID when preparing again, else org.nxnative.<base game title ID in lowercase>)')
+    ap.add_argument('--bundle-id', help='the app\'s bundle ID (default: saved Xcode ID when preparing again, else <bundle prefix>.<base game title ID in lowercase>)')
+    ap.add_argument('--bundle-prefix', help='the start of a new game\'s bundle ID, e.g. com.<you>.nxnative: one your team can register (default: the BUNDLE_PREFIX setting, else org.nxnative)')
     ap.add_argument('--romfs', choices=('bundle', 'separate'), help='bundle = the game files go into the IPA (default: the ROMFS setting, bundle); separate = they stay out of the IPA and the Xcode app: the build is small and fast, and the RomFS image '
                     'is copied to the phone once per game version with the scripts/push_romfs.sh command printed at the end (the app refuses an image of another version)')
     ap.add_argument('--prepare-xcode', action='store_true', help='prepare a per-game Xcode project and add it to the shared workspace instead of packing an IPA (requires keeping extracted files)')
@@ -2313,7 +2319,8 @@ def main(args=None):
     # the app name and bundle ID both come from the base NSP: the game name in its control data, and a bundle ID from its title ID; a setting / the command line overrides them
     app_name = args.app_name or APP_NAME or nacp.name(base / 'control.nacp')
     if not app_name and not (mac and not mac_pack): raise BuildError(f'no game name in the base extraction ({base / "control.nacp"}; an older extraction did not save it: delete extract/ and run again, or give --app-name)')
-    bundle_id = args.bundle_id or BUNDLE_ID or saved_signing.get('PRODUCT_BUNDLE_IDENTIFIER') or f'org.nxnative.{app:016x}' + ('.visionos' if visionos else '')
+    prefix = (args.bundle_prefix or BUNDLE_PREFIX or 'org.nxnative').rstrip('.')
+    bundle_id = args.bundle_id or BUNDLE_ID or saved_signing.get('PRODUCT_BUNDLE_IDENTIFIER') or f'{prefix}.{app:016x}' + ('.visionos' if visionos else '')
     team_id = args.team_id or TEAM_ID or env.get('DM_TEAM_ID') or saved_signing.get('DEVELOPMENT_TEAM') or '0000000000'
     if prepare_xcode:
         try: xcode_projects.check_bundle_id(workspace, project, bundle_id)
@@ -2421,6 +2428,9 @@ def main(args=None):
         say(f'ready: {workspace}')
         say(f'game project: {project}')
         say(f'Xcode derived data: {xcode_dd}')
+        # for a program driving the build (scripts/deploy.py): what it builds, installs and copies next
+        PROG.result({'kind': 'xcode', 'platform': 'visionos' if visionos else 'ios', 'project': str(project), 'derived_data': str(xcode_dd), 'bundle_id': bundle_id,
+                     'team_id': team_id, 'title_id': f'{app:016X}', 'work': str(work), 'romfs': str(rfs.source(game)) if separate and os.path.isfile(rfs.source(game)) else None})
         if separate: say_push_romfs(rfs.source(game), bundle_id)
         say('choose the game scheme in Xcode, select your Team and your Apple Vision Pro, then Run (Release)' if visionos else
             'choose the game scheme in Xcode, select your Team and iPhone or iPad, then Run (Release)')
